@@ -39,7 +39,7 @@ def main():
           else "CPU로 실행됩니다 (GPU가 인식되지 않았습니다 - CUDA/드라이버 설치를 확인하세요)")
 
     # ── 1) Roboflow에서 데이터셋 다운로드 (Colab 노트북과 동일) ───────────
-    RF_API_KEY = "MyrR6UFnOMOjR8gHw6MI"   # 워크스페이스 키 (버전 바뀌어도 그대로)
+    RF_API_KEY = ""   # 워크스페이스 키 (버전 바뀌어도 그대로)
     WORKSPACE = "-fcrfh"
     PROJECT = "my-first-project-b45jq"
     VERSION = 5                            # <-- 다음번엔 이 숫자만 바꾸면 됨
