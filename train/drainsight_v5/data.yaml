@@ -1,0 +1,13 @@
+train: F:\minsik\drainsight\train\drainsight_v5\train\images
+val: F:\minsik\drainsight\train\drainsight_v5\valid\images
+test: F:\minsik\drainsight\train\drainsight_v5\test\images
+nc: 2
+names:
+- drain_area
+- drain_full
+roboflow:
+  workspace: -fcrfh
+  project: my-first-project-b45jq
+  version: 5
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/-fcrfh/my-first-project-b45jq/dataset/5

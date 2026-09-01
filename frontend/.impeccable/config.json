@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/App.css"
+        ],
+        "createdAt": "2026-08-29T12:43:35.605Z",
+        "reason": "status-color-coded left border (2px) reused consistently across status-card/priority-row/ov-urgent-row to mirror the map legend color; functional severity indicator in a monitoring dashboard, not decorative accent"
+      },
+      {
+        "rule": "codex-grid-background",
+        "value": "*",
+        "files": [
+          "src/App.css"
+        ],
+        "createdAt": "2026-08-29T12:43:35.882Z",
+        "reason": "overview-grid is a scan-grid overlay layered on the live AmbientMap surveillance map background, an actual map surface per the rule's own map/canvas exception"
+      }
+    ]
+  }
+}

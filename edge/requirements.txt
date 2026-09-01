@@ -1,0 +1,8 @@
+requests
+numpy
+opencv-python
+ultralytics
+pyserial
+pynmea2
+# picamera2는 Raspberry Pi 전용 패키지라 여기 목록에서 제외.
+# Pi 배포 시 pip install picamera2 필요 (infer.py의 PiCameraCapture가 optional import로 처리).
