@@ -1,22 +1,22 @@
 import {
   Broadcast,
   SquaresFour,
-  MapTrifold,
+  ChartBar,
   ListNumbers,
   Path,
   Truck,
   Sun,
   MoonStars,
 } from '@phosphor-icons/react'
+import drainSightLogo from '../assets/drainsight_logo.svg'
 
 // 아이콘은 Phosphor 한 종류만 쓰고 굵기도 전역으로 1.5(regular 대신 duotone 없이)로 고정.
 const ICON_PROPS = { size: 18, weight: 'regular' }
 
 export const VIEWS = [
-  { id: 'overview', label: '개요', Icon: Broadcast },
-  { id: 'status', label: '현황', Icon: SquaresFour },
-  { id: 'map', label: '지도', Icon: MapTrifold },
-  { id: 'priority', label: '우선순위', Icon: ListNumbers },
+  { id: 'overview', label: '현황', Icon: Broadcast },
+  { id: 'list', label: '목록', Icon: ListNumbers },
+  { id: 'analysis', label: '분석', Icon: ChartBar },
   { id: 'route', label: '동선', Icon: Path },
   { id: 'fleet', label: '차량', Icon: Truck },
 ]
@@ -25,13 +25,8 @@ export default function NavRail({ current, onNavigate, counts = {}, theme, onTog
   return (
     <nav className="rail" aria-label="주 메뉴">
       <div className="rail-brand">
-        <span className="rail-mark" aria-hidden="true">
-          <Broadcast size={15} weight="bold" />
-        </span>
-        <span className="rail-brand-text">
-          <span className="rail-brand-name">drainSight</span>
-          <span className="rail-brand-sub">천안시 빗물받이 관제</span>
-        </span>
+        <img className="rail-brand-logo" src={drainSightLogo} alt="drainSight" />
+        <span className="rail-brand-sub">천안시 빗물받이 관제</span>
       </div>
 
       <div className="rail-nav">
