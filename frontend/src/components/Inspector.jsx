@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { X } from '@phosphor-icons/react'
 import MaintenanceAction from './MaintenanceAction.jsx'
 import PriorityReasons from './PriorityReasons.jsx'
@@ -15,32 +16,35 @@ export default function Inspector({
   weightProfile,
   onResolved,
   onClose,
-  forced,
+  open,
 }) {
-  if (!drain) {
-    return (
-      <aside className={`inspector ${forced ? 'inspector-forced' : ''}`} aria-label="선택한 지점 상세">
-        <p className="inspector-empty">
-          지도, 카드, 우선순위 목록에서
-          <br />
-          빗물받이를 선택하면
-          <br />
-          판정 근거와 이력이 여기 표시됩니다.
-        </p>
-      </aside>
-    )
+  const [visibleDrain, setVisibleDrain] = useState(drain)
+
+  useEffect(() => {
+    if (drain) setVisibleDrain(drain)
+  }, [drain])
+
+  if (!visibleDrain) {
+    return null
   }
 
-  const color = statusColor(drain.last_status)
-  const detail = statusDetail(drain.last_status)
+  const color = statusColor(visibleDrain.last_status)
+  const detail = statusDetail(visibleDrain.last_status)
 
   return (
-    <aside className={`inspector ${forced ? 'inspector-forced' : ''}`} aria-label="선택한 지점 상세">
+    <aside
+      className={`inspector ${open && drain ? 'open' : ''}`}
+      aria-label="선택한 지점 상세"
+      aria-hidden={!open}
+      onTransitionEnd={() => {
+        if (!open) setVisibleDrain(null)
+      }}
+    >
       <div className="inspector-head">
         <div>
           <h2 className="inspector-title">
-            {drain.name}
-            <span className="inspector-code">{drain.external_code || '-'}</span>
+            {visibleDrain.name}
+            <span className="inspector-code">{visibleDrain.external_code || '-'}</span>
           </h2>
         </div>
         <button type="button" className="inspector-close" onClick={onClose} aria-label="상세 닫기">
@@ -48,44 +52,46 @@ export default function Inspector({
         </button>
       </div>
 
-      <section className="inspector-section">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span className="chip" style={{ '--chip-color': color }}>
-            {statusLabel(drain.last_status)}
-          </span>
-          {detail && <span className="muted" style={{ fontSize: 12 }}>{detail}</span>}
-        </div>
-        <div className="status-card-figures" style={{ marginTop: 12, marginBottom: 0 }}>
-          <span>
-            <span className="figure-label">차폐율</span>
-            <span className="figure-value">
-              {drain.last_occlusion_pct != null ? `${drain.last_occlusion_pct.toFixed(1)}%` : '-'}
+      <div className="inspector-body">
+        <section className="inspector-section">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="chip" style={{ '--chip-color': color }}>
+              {statusLabel(visibleDrain.last_status)}
             </span>
-          </span>
-          <span>
-            <span className="figure-label">우선순위</span>
-            <span className="figure-value">
-              {drain.priority_score != null ? drain.priority_score.toFixed(3) : '-'}
+            {detail && <span className="muted" style={{ fontSize: 12 }}>{detail}</span>}
+          </div>
+          <div className="status-card-figures" style={{ marginTop: 12, marginBottom: 0 }}>
+            <span>
+              <span className="figure-label">차폐율</span>
+              <span className="figure-value">
+                {visibleDrain.last_occlusion_pct != null ? `${visibleDrain.last_occlusion_pct.toFixed(1)}%` : '-'}
+              </span>
             </span>
-          </span>
-          <span>
-            <span className="figure-label">마지막 판정</span>
-            <span className="figure-value" style={{ fontSize: 12 }}>
-              {formatTime(drain.last_updated)}
+            <span>
+              <span className="figure-label">우선순위</span>
+              <span className="figure-value">
+                {visibleDrain.priority_score != null ? visibleDrain.priority_score.toFixed(3) : '-'}
+              </span>
             </span>
-          </span>
-        </div>
-      </section>
+            <span>
+              <span className="figure-label">마지막 판정</span>
+              <span className="figure-value" style={{ fontSize: 12 }}>
+                {formatTime(visibleDrain.last_updated)}
+              </span>
+            </span>
+          </div>
+        </section>
 
-      <MaintenanceAction drain={drain} onResolved={onResolved} />
-      <PriorityReasons drain={drain} weightProfile={weightProfile} />
-      <HistoryPanel
-        drain={drain}
-        history={history}
-        systemEvents={systemEvents}
-        loading={loading}
-        error={error}
-      />
+        <MaintenanceAction drain={visibleDrain} onResolved={onResolved} />
+        <PriorityReasons drain={visibleDrain} weightProfile={weightProfile} />
+        <HistoryPanel
+          drain={visibleDrain}
+          history={history}
+          systemEvents={systemEvents}
+          loading={loading}
+          error={error}
+        />
+      </div>
     </aside>
   )
 }

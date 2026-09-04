@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, ZoomControl, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { statusColor, statusLabel, STATUS_COLORS } from '../format'
 
@@ -70,8 +70,9 @@ export default function PriorityMap({ drains, flashIds, selectedId, onSelect, te
   }
 
   return (
-    <MapContainer center={center} zoom={16} className="priority-map" scrollWheelZoom>
+    <MapContainer center={center} zoom={16} className="priority-map" scrollWheelZoom zoomControl={false}>
       <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
+      <ZoomControl position="bottomleft" />
       <MapViewport points={points} />
 
       {teams && teams.map((team, i) => {
