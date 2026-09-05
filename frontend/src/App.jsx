@@ -24,6 +24,7 @@ import { QrPreviewModal, QrShareModal } from './components/QrModals.jsx'
 import Pagination, { usePagination } from './components/Pagination.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import OverviewView from './views/OverviewView.jsx'
+import AnalysisView from './views/AnalysisView.jsx'
 import VehicleManagementView from './views/VehicleManagementView.jsx'
 import drainSampleImage from './assets/drain_sample.jpeg'
 import qrSampleImage from './assets/qr_sample.png'
@@ -789,15 +790,11 @@ export default function App() {
             )}
 
             {drains && view === 'analysis' && (
-              <div className="analysis-grid" aria-label="분석 카드 레이아웃">
-                {Array.from({ length: 8 }, (_, index) => (
-                  <section
-                    className="analysis-card"
-                    key={index}
-                    aria-label={`분석 카드 ${index + 1}`}
-                  />
-                ))}
-              </div>
+              <AnalysisView
+                drains={drains}
+                weatherAlert={weatherAlert}
+                onOpenDrain={handleInspectFromOverview}
+              />
             )}
 
             {drains && view === 'route' && (

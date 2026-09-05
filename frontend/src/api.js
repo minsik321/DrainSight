@@ -25,6 +25,14 @@ export async function fetchSystemEvents(drainId) {
   return res.json()
 }
 
+// drain_id를 생략하면 전체 시스템 이벤트를 반환한다 — 분석 페이지의 차량별
+// RESULT_MISSING 집계처럼 특정 drain에 매이지 않는 화면에서 쓴다.
+export async function fetchAllSystemEvents(limit = 500) {
+  const res = await fetch(`${API_BASE}/api/system-events?limit=${limit}`)
+  if (!res.ok) throw new Error(`GET /api/system-events ${res.status}`)
+  return res.json()
+}
+
 export async function refreshPriority() {
   const res = await fetch(`${API_BASE}/api/priority/refresh`, { method: 'POST' })
   if (!res.ok) throw new Error(`POST /api/priority/refresh ${res.status}`)
