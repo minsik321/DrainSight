@@ -70,7 +70,6 @@ export default function PriorityList({ drains, selectedId, onSelect, sort = 'pri
         return (b.priority_score ?? 0) - (a.priority_score ?? 0)
       })
   }, [drains, district, dong, sortMode])
-  const maxScore = Math.max(0.0001, ...sorted.map((d) => d.priority_score ?? 0))
   const { page, setPage, totalPages, pageItems } = usePagination(sorted, PAGE_SIZE, {
     selectedKey: selectedId,
     getKey: (drain) => drain.id,
@@ -122,7 +121,10 @@ export default function PriorityList({ drains, selectedId, onSelect, sort = 'pri
               type="button"
               key={d.id}
               className={`priority-row ${selectedId === d.id ? 'selected' : ''}`}
-              style={{ '--row-color': color }}
+              style={{
+                '--row-color': color,
+                '--fill': Math.max(0, Math.min(1, score)),
+              }}
               onClick={() => onSelect(d.id)}
               aria-pressed={selectedId === d.id}
             >
@@ -138,14 +140,8 @@ export default function PriorityList({ drains, selectedId, onSelect, sort = 'pri
                   {formatTime(d.last_updated)}
                 </span>
               </span>
-              <span className="chip chip-sm" style={{ '--chip-color': color }}>
+              <span className="priority-status">
                 {statusLabel(d.last_status)}
-              </span>
-              <span className="score-bar">
-                <span
-                  className="score-bar-fill"
-                  style={{ '--fill': score / maxScore }}
-                />
               </span>
               <span className="score-value">{score.toFixed(3)}</span>
             </button>

@@ -5,6 +5,7 @@ import {
   ArrowCounterClockwise,
   DownloadSimple,
   Eye,
+  MapTrifold,
   ShareNetwork,
   Warning,
   X,
@@ -18,9 +19,10 @@ import MaintenanceAction from './components/MaintenanceAction.jsx'
 import PriorityMap, { MapLegend } from './components/PriorityMap.jsx'
 import PriorityList from './components/PriorityList.jsx'
 import RoutePlanner from './components/RoutePlanner.jsx'
-import VehiclePanel from './components/VehiclePanel.jsx'
+import RouteMapModal from './components/RouteMapModal.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import OverviewView from './views/OverviewView.jsx'
+import VehicleManagementView from './views/VehicleManagementView.jsx'
 import drainSampleImage from './assets/drain_sample.jpeg'
 import qrSampleImage from './assets/qr_sample.png'
 import { formatTime } from './format'
@@ -139,22 +141,112 @@ function DetailMetricGraphs({ drain }) {
   )
 }
 
+const DRAFT_ROUTE_MIN_STOPS = 6
+const DRAFT_ROUTE_MAX_STOPS = 10
+
+function haversineKm(a, b) {
+  const toRadians = (degrees) => degrees * Math.PI / 180
+  const earthRadiusKm = 6371
+  const latDelta = toRadians(b.lat - a.lat)
+  const lngDelta = toRadians(b.lng - a.lng)
+  const latA = toRadians(a.lat)
+  const latB = toRadians(b.lat)
+  const value = Math.sin(latDelta / 2) ** 2
+    + Math.cos(latA) * Math.cos(latB) * Math.sin(lngDelta / 2) ** 2
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
+}
+
+function routeDistanceKm(stops) {
+  return stops.slice(1).reduce(
+    (total, stop, index) => total + haversineKm(stops[index], stop),
+    0,
+  )
+}
+
+// 최근접 순회로 만든 경로에서 교차하거나 불필요하게 꺾이는 구간을 2-opt로 정리한다.
+// 첫 지점은 해당 팀에서 우선순위가 가장 높은 지점으로 고정한다.
+function optimizeStopOrder(stops) {
+  const route = [...stops]
+  let improved = true
+  let pass = 0
+
+  while (improved && pass < 20) {
+    improved = false
+    pass += 1
+
+    for (let start = 1; start < route.length - 1; start += 1) {
+      for (let end = start + 1; end < route.length; end += 1) {
+        const before = haversineKm(route[start - 1], route[start])
+          + (end + 1 < route.length ? haversineKm(route[end], route[end + 1]) : 0)
+        const after = haversineKm(route[start - 1], route[end])
+          + (end + 1 < route.length ? haversineKm(route[start], route[end + 1]) : 0)
+
+        if (after + 0.000001 < before) {
+          route.splice(start, end - start + 1, ...route.slice(start, end + 1).reverse())
+          improved = true
+        }
+      }
+    }
+  }
+
+  return route
+}
+
+function takeNearbyStops(unassigned, targetSize) {
+  if (unassigned.length === 0) return []
+
+  const stops = [unassigned.shift()]
+  while (stops.length < targetSize && unassigned.length > 0) {
+    const current = stops[stops.length - 1]
+    let nearestIndex = 0
+    let nearestDistance = haversineKm(current, unassigned[0])
+
+    for (let index = 1; index < unassigned.length; index += 1) {
+      const distance = haversineKm(current, unassigned[index])
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestIndex = index
+      }
+    }
+
+    stops.push(unassigned.splice(nearestIndex, 1)[0])
+  }
+
+  return optimizeStopOrder(stops)
+}
+
 function buildDraftRoutes(count, drains = []) {
   const routeCount = Math.max(1, Math.min(12, Number(count) || 1))
-  const candidates = [...drains]
+  const unassigned = drains
+    .filter((drain) => Number.isFinite(drain.lat) && Number.isFinite(drain.lng))
     .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0))
-    .slice(0, Math.max(routeCount * 2, routeCount))
+    .slice(0, routeCount * DRAFT_ROUTE_MAX_STOPS)
 
   return Array.from({ length: routeCount }, (_, index) => {
-    const stops = candidates.filter((_, stopIndex) => stopIndex % routeCount === index)
+    const remainingRoutes = routeCount - index
+    const enoughForMinimum = unassigned.length >= remainingRoutes * DRAFT_ROUTE_MIN_STOPS
+    const targetSize = enoughForMinimum
+      ? Math.min(
+        DRAFT_ROUTE_MAX_STOPS,
+        unassigned.length - DRAFT_ROUTE_MIN_STOPS * (remainingRoutes - 1),
+      )
+      : Math.ceil(unassigned.length / remainingRoutes)
+    const stops = takeNearbyStops(unassigned, targetSize)
     const priority = stops.reduce((sum, drain) => sum + (drain.priority_score ?? 0), 0)
+    const distanceKm = routeDistanceKm(stops)
+    const firstStop = stops[0]
+    const lastStop = stops[stops.length - 1]
+    const path = stops.length > 1
+      ? `${firstStop.name} ··· ${lastStop.name}`
+      : firstStop?.name || '배정 대기'
+
     return {
       id: index + 1,
       name: `동선 ${index + 1}`,
       team: `${index + 1}팀`,
-      path: stops.map((drain) => drain.name).join(' → ') || '배정 대기',
-      distance: `${(2.4 + index * 0.8 + stops.length * 0.35).toFixed(1)}km`,
-      duration: `${Math.round(18 + index * 6 + stops.length * 5)}분`,
+      path,
+      distance: `${distanceKm.toFixed(1)}km`,
+      duration: `${Math.round(distanceKm * 3 + stops.length * 4)}분`,
       priority,
       stops,
     }
@@ -186,11 +278,10 @@ export default function App() {
   const [weatherAlert, setWeatherAlert] = useState(null)
   const [weatherToastVisible, setWeatherToastVisible] = useState(false)
   const [modeChanging, setModeChanging] = useState(false)
-  const [vehicleMapSelection, setVehicleMapSelection] = useState(null)
-  const [selectedVehicleId, setSelectedVehicleId] = useState(null)
   const [selectedTeamId, setSelectedTeamId] = useState(null)
   const [routeTeamCount, setRouteTeamCount] = useState(2)
   const [draftRoutes, setDraftRoutes] = useState([])
+  const [routeMapRoute, setRouteMapRoute] = useState(null)
   const [view, setView] = useState(readHashView)
   const [theme, setTheme] = useState(readStoredTheme)
 
@@ -423,11 +514,6 @@ export default function App() {
     () => (drains || []).filter((drain) => drain.requires_action),
     [drains],
   )
-  const vehicleMapDrainIds = useMemo(
-    () => vehicleMapSelection ? new Set(vehicleMapSelection.drainIds) : null,
-    [vehicleMapSelection],
-  )
-  const handleVehicleMapChange = useCallback((selection) => setVehicleMapSelection(selection), [])
   const selectedTeam = useMemo(
     () => (selectedTeamId != null ? routePlan?.teams?.find((t) => t.team_id === selectedTeamId) : null),
     [selectedTeamId, routePlan],
@@ -436,17 +522,8 @@ export default function App() {
     () => (selectedTeam ? new Set(selectedTeam.stops.map((s) => s.drain_id)) : null),
     [selectedTeam],
   )
-  // 차량 선택과 동선(팀) 선택은 상호 배타적 — 둘 다 지도의 "보이는 지점"을 좁히는 동일한
-  // 슬롯을 다투므로, 하나를 고르면 다른 쪽은 자동으로 해제한다.
-  const effectiveVisibleDrainIds = vehicleMapDrainIds || teamDrainIds
-  const effectiveTeams = selectedTeam ? [selectedTeam] : (vehicleMapSelection ? null : routePlan?.teams)
-  const handleSelectVehicle = useCallback((id) => {
-    setSelectedVehicleId(id)
-    setSelectedTeamId(null)
-  }, [])
   const handleSelectTeam = useCallback((teamId) => {
     setSelectedTeamId((prev) => (prev === teamId ? null : teamId))
-    setSelectedVehicleId(null)
   }, [])
   const handleRoutePlanResult = useCallback((result) => {
     setRoutePlan(result)
@@ -454,12 +531,9 @@ export default function App() {
   }, [])
   const handleGenerateDraftRoutes = useCallback(() => {
     setDraftRoutes(buildDraftRoutes(routeTeamCount, drains || []))
+    setRouteMapRoute(null)
   }, [drains, routeTeamCount])
-  const handleResetMapView = useCallback(() => {
-    setSelectedVehicleId(null)
-    setSelectedTeamId(null)
-    setRoutePlan(null)
-  }, [])
+  const handleCloseRouteMap = useCallback(() => setRouteMapRoute(null), [])
 
   // 개요에서 급한 지점을 누르면 위치와 상세를 같이 볼 수 있는 지도 화면으로 넘긴다.
   const handleInspectFromOverview = useCallback((id) => {
@@ -478,14 +552,6 @@ export default function App() {
     setSelectedId(null)
     setListDetailId(id)
   }, [])
-
-  const mapFilterLabel = vehicleMapSelection
-    ? `${vehicleMapSelection.vehicleCode} 판정 지점`
-    : selectedTeam
-      ? `팀 ${selectedTeam.team_id} 동선`
-      : routePlan
-        ? '동선 추천 표시 중'
-        : null
 
   const loading = drains === null && !error
 
@@ -646,7 +712,15 @@ export default function App() {
             )}
 
             {drains && view === 'analysis' && (
-              <div className="empty analysis-empty">분석 화면은 아직 준비 중입니다.</div>
+              <div className="analysis-grid" aria-label="분석 카드 레이아웃">
+                {Array.from({ length: 8 }, (_, index) => (
+                  <section
+                    className="analysis-card"
+                    key={index}
+                    aria-label={`분석 카드 ${index + 1}`}
+                  />
+                ))}
+              </div>
             )}
 
             {drains && view === 'route' && (
@@ -725,22 +799,32 @@ export default function App() {
                                 <span>{route.path}</span>
                                 <span>{route.distance}</span>
                                 <span>{route.duration}</span>
-                                <span>대기</span>
+                                <span className="route-result-map-cell">
+                                  <button
+                                    type="button"
+                                    className="route-result-map-button"
+                                    onClick={() => setRouteMapRoute(route)}
+                                    aria-label={`${route.name} 지도 보기`}
+                                    title={`${route.name} 지도 보기`}
+                                  >
+                                    <MapTrifold size={18} weight="bold" />
+                                  </button>
+                                </span>
                               </div>
                             ))}
                           </div>
                         ) : (
                           <div className="route-result-empty">생성된 동선이 없습니다.</div>
                         )}
-                        <button type="button" className="btn btn-sm route-map-button">
-                          전체 동선 지도
-                        </button>
                       </div>
                     </section>
 
                     <section className="route-qr-card">
                       <div className="route-qr-head">
                         <h3>QR 생성</h3>
+                        <button type="button" className="btn btn-primary route-qr-bulk">
+                          QR 일괄 생성
+                        </button>
                       </div>
                       <div className="route-qr-content">
                         <div className="route-qr-preview">
@@ -770,9 +854,6 @@ export default function App() {
                         </div>
                       </div>
                     </section>
-                    <button type="button" className="btn btn-primary route-qr-bulk">
-                      QR 일괄 생성
-                    </button>
                   </div>
 
                   <aside className="route-priority-card">
@@ -800,46 +881,14 @@ export default function App() {
               )
             )}
 
-            {/* 차량별 조회도 마찬가지로 목록 옆에 바로 이동 경로를 그린다. */}
+            {/* 차량 등록 목록 아래에서 노선별 관측 지점과 이동 경로를 함께 확인한다. */}
             {drains && view === 'fleet' && (
-              <div className="split-view">
-                <div className="split-list">
-                  <VehiclePanel
-                    selectedVehicleId={selectedVehicleId}
-                    onSelectVehicle={handleSelectVehicle}
-                    onSelectDrain={setSelectedId}
-                    onVehicleMapChange={handleVehicleMapChange}
-                  />
-                </div>
-                <div className="split-map">
-                  <PriorityMap
-                    drains={drains}
-                    flashIds={flashIds}
-                    selectedId={selectedId}
-                    onSelect={setSelectedId}
-                    visibleDrainIds={vehicleMapDrainIds}
-                    vehicleTrail={vehicleMapSelection?.trail}
-                  />
-                  <MapLegend />
-                  {!vehicleMapSelection && (
-                    <div className="split-map-hint">
-                      차량을 선택하면 그 차량이 판정한 지점과
-                      <br />
-                      이동 경로가 여기 지도에 표시됩니다.
-                    </div>
-                  )}
-                  {selectedVehicleId != null && (
-                    <button
-                      type="button"
-                      className="btn btn-sm split-map-reset"
-                      onClick={() => handleSelectVehicle(null)}
-                    >
-                      <ArrowCounterClockwise size={13} weight="bold" />
-                      전체 지점 보기
-                    </button>
-                  )}
-                </div>
-              </div>
+              <VehicleManagementView
+                drains={drains}
+                flashIds={flashIds}
+                selectedId={selectedId}
+                onSelectDrain={setSelectedId}
+              />
             )}
           </main>
 
@@ -854,6 +903,9 @@ export default function App() {
             onClose={() => setSelectedId(null)}
             open={selectedId != null}
           />
+          {routeMapRoute && (
+            <RouteMapModal route={routeMapRoute} onClose={handleCloseRouteMap} />
+          )}
         </div>
       </div>
     </div>

@@ -111,7 +111,10 @@ export default function OverviewView({ drains, actionDrains, weatherAlert, wsCon
                       type="button"
                       key={d.id}
                       className="ov-urgent-row"
-                      style={{ '--row-color': color }}
+                      style={{
+                        '--row-color': color,
+                        '--fill': Math.max(0, Math.min(1, d.priority_score ?? 0)),
+                      }}
                       onClick={() => onSelect(d.id)}
                     >
                       <span className="ov-urgent-rank">{i + 1}</span>
@@ -121,7 +124,7 @@ export default function OverviewView({ drains, actionDrains, weatherAlert, wsCon
                           {d.priority_reasons?.[0] || '점검 기록 없음'}
                         </span>
                       </span>
-                      <span className="chip chip-sm" style={{ '--chip-color': color }}>
+                      <span className="ov-urgent-status">
                         {statusLabel(d.last_status)}
                       </span>
                       <span className="ov-urgent-score">

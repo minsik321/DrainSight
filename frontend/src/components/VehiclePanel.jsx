@@ -1,22 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CaretRight } from '@phosphor-icons/react'
 import { fetchVehicles, fetchVehicleDrains } from '../api'
 import { statusColor, statusLabel, reasonLabel, formatTime } from '../format'
 import Pagination, { usePagination } from './Pagination.jsx'
 
-export default function VehiclePanel({ selectedVehicleId, onSelectVehicle, onSelectDrain, onVehicleMapChange }) {
+export default function VehiclePanel({
+  selectedVehicleId,
+  onSelectVehicle,
+  onSelectDrain,
+  onVehicleMapChange,
+  localRoutes = [],
+}) {
   const [vehicles, setVehicles] = useState(null)
   const [error, setError] = useState(null)
   const [vehicleDrains, setVehicleDrains] = useState([])
   const [drainsLoading, setDrainsLoading] = useState(false)
   const [drainsError, setDrainsError] = useState(null)
-  const vehiclePagination = usePagination(vehicles || [], 6, { resetKey: vehicles?.length })
+  const displayedVehicles = useMemo(
+    () => [...localRoutes, ...(vehicles || [])],
+    [localRoutes, vehicles],
+  )
+  const vehiclePagination = usePagination(displayedVehicles, 6, { resetKey: displayedVehicles.length })
   const drainPagination = usePagination(vehicleDrains, 8, { resetKey: selectedVehicleId })
 
   useEffect(() => {
     fetchVehicles()
       .then(setVehicles)
-      .catch((e) => setError(e.message))
+      .catch((fetchError) => setError(fetchError.message))
   }, [])
 
   useEffect(() => {
@@ -26,42 +36,65 @@ export default function VehiclePanel({ selectedVehicleId, onSelectVehicle, onSel
       onVehicleMapChange?.(null)
       return
     }
+
+    const localRoute = localRoutes.find((vehicle) => vehicle.id === selectedVehicleId)
+    if (localRoute) {
+      const data = localRoute.stops.map((drain) => ({
+        ...drain,
+        drain_id: drain.id,
+        detection_count: 0,
+        last_status_by_vehicle: drain.last_status,
+        last_occlusion_pct_by_vehicle: drain.last_occlusion_pct,
+        last_seen_by_vehicle: drain.last_updated,
+        reason_code_by_vehicle: drain.reason_code,
+      }))
+      setVehicleDrains(data)
+      setDrainsError(null)
+      setDrainsLoading(false)
+      onVehicleMapChange?.({
+        vehicleId: localRoute.id,
+        vehicleCode: localRoute.route_name,
+        drainIds: localRoute.stops.map((drain) => drain.id),
+        trail: localRoute.stops.map((drain) => [drain.lat, drain.lng]),
+      })
+      return
+    }
+
     let cancelled = false
     setDrainsLoading(true)
     setDrainsError(null)
     fetchVehicleDrains(selectedVehicleId)
       .then((data) => {
-        if (!cancelled) {
-          setVehicleDrains(data)
-          const selectedVehicle = vehicles?.find((vehicle) => vehicle.id === selectedVehicleId)
-          // 지도에 이 차량이 실제로 점검한 순서(마지막 방문 시각 오름차순)대로 선을 이어
-          // 보여주기 위한 좌표 목록 — 목록 표시 순서(최근 방문 drain 우선)와는 별개다.
-          const trail = [...data]
-            .filter((d) => d.lat != null && d.lng != null && d.last_seen_by_vehicle)
-            .sort((a, b) => new Date(a.last_seen_by_vehicle) - new Date(b.last_seen_by_vehicle))
-            .map((d) => [d.lat, d.lng])
-          onVehicleMapChange?.({
-            vehicleId: selectedVehicleId,
-            vehicleCode: selectedVehicle?.vehicle_code || String(selectedVehicleId),
-            drainIds: data.map((drain) => drain.drain_id),
-            trail,
-          })
-          setDrainsLoading(false)
-        }
+        if (cancelled) return
+        setVehicleDrains(data)
+        const selectedVehicle = vehicles?.find((vehicle) => vehicle.id === selectedVehicleId)
+        const trail = [...data]
+          .filter((drain) => drain.lat != null && drain.lng != null && drain.last_seen_by_vehicle)
+          .sort((a, b) => new Date(a.last_seen_by_vehicle) - new Date(b.last_seen_by_vehicle))
+          .map((drain) => [drain.lat, drain.lng])
+        onVehicleMapChange?.({
+          vehicleId: selectedVehicleId,
+          vehicleCode: selectedVehicle?.vehicle_code || String(selectedVehicleId),
+          drainIds: data.map((drain) => drain.drain_id),
+          trail,
+        })
+        setDrainsLoading(false)
       })
-      .catch((e) => {
+      .catch((fetchError) => {
         if (!cancelled) {
-          setDrainsError(e.message)
+          setDrainsError(fetchError.message)
           setDrainsLoading(false)
         }
       })
     return () => {
       cancelled = true
     }
-  }, [selectedVehicleId, vehicles, onVehicleMapChange])
+  }, [selectedVehicleId, vehicles, localRoutes, onVehicleMapChange])
 
-  if (error) return <div className="error-banner">차량 목록 조회 실패: {error}</div>
-  if (vehicles === null) {
+  if (error && localRoutes.length === 0) {
+    return <div className="error-banner">기존 차량 목록 조회 실패: {error}</div>
+  }
+  if (vehicles === null && localRoutes.length === 0) {
     return (
       <div className="skeleton-grid">
         <div className="skeleton-block" style={{ height: 48 }} />
@@ -69,58 +102,58 @@ export default function VehiclePanel({ selectedVehicleId, onSelectVehicle, onSel
       </div>
     )
   }
-  if (vehicles.length === 0) return <div className="empty">등록된 차량이 없습니다.</div>
+  if (displayedVehicles.length === 0) return <div className="empty">등록된 노선이 없습니다.</div>
 
   return (
     <div>
+      {error && <div className="error-banner">기존 차량 목록 조회 실패: {error}</div>}
       <ul className="vehicle-list">
-        {vehiclePagination.pageItems.map((v) => (
-          <li key={v.id}>
+        {vehiclePagination.pageItems.map((vehicle) => (
+          <li key={vehicle.id}>
             <button
-              className={`vehicle-item ${selectedVehicleId === v.id ? 'selected' : ''}`}
-              onClick={() => onSelectVehicle(v.id === selectedVehicleId ? null : v.id)}
-              aria-expanded={selectedVehicleId === v.id}
+              type="button"
+              className={`vehicle-item ${selectedVehicleId === vehicle.id ? 'selected' : ''}`}
+              onClick={() => onSelectVehicle(vehicle.id === selectedVehicleId ? null : vehicle.id)}
+              aria-expanded={selectedVehicleId === vehicle.id}
             >
-              <span className="vehicle-code">{v.vehicle_code}</span>
+              <span className="vehicle-code">{vehicle.route_name || `노선 ${vehicle.route_id ?? '-'}`}</span>
               <span className="vehicle-meta">
-                {v.vehicle_type || '차종 미상'} / 노선 {v.route_id ?? '-'}
+                {vehicle.vehicle_code} / {vehicle.vehicle_type || '분류 미상'}
               </span>
               <CaretRight className="vehicle-chevron" size={14} weight="bold" />
             </button>
 
-            {selectedVehicleId === v.id && (
+            {selectedVehicleId === vehicle.id && (
               <div className="vehicle-drains">
                 {drainsLoading && <p className="muted">불러오는 중...</p>}
                 {drainsError && <div className="error-banner">조회 실패: {drainsError}</div>}
                 {!drainsLoading && !drainsError && vehicleDrains.length === 0 && (
-                  <p className="muted">이 차량이 보낸 판정 기록이 없습니다.</p>
+                  <p className="muted">이 노선의 관측 기록이 없습니다.</p>
                 )}
                 {!drainsLoading && vehicleDrains.length > 0 && (
                   <>
                     <ul className="vehicle-drain-list">
-                      {drainPagination.pageItems.map((d) => (
-                        <li key={d.drain_id}>
+                      {drainPagination.pageItems.map((drain) => (
+                        <li key={drain.drain_id}>
                           <button
+                            type="button"
                             className="vehicle-drain-item"
-                            onClick={() => onSelectDrain?.(d.drain_id)}
+                            onClick={() => onSelectDrain?.(drain.drain_id)}
                           >
                             <span className="vehicle-drain-name">
-                              {d.name} <span className="vehicle-drain-code">{d.external_code}</span>
+                              {drain.name} <span className="vehicle-drain-code">{drain.external_code}</span>
                             </span>
                             <span
                               className="chip chip-sm"
-                              style={{ '--chip-color': statusColor(d.last_status_by_vehicle) }}
+                              style={{ '--chip-color': statusColor(drain.last_status_by_vehicle) }}
                             >
-                              {statusLabel(d.last_status_by_vehicle)}
+                              {statusLabel(drain.last_status_by_vehicle)}
                             </span>
                             <span className="vehicle-drain-meta">
-                              차폐{' '}
-                              {d.last_occlusion_pct_by_vehicle != null
-                                ? `${d.last_occlusion_pct_by_vehicle.toFixed(1)}%`
-                                : '-'}{' '}
-                              / {d.detection_count}건 / {formatTime(d.last_seen_by_vehicle)}
-                              {d.reason_code_by_vehicle &&
-                                ` / ${reasonLabel(d.reason_code_by_vehicle)}`}
+                              차폐율 {drain.last_occlusion_pct_by_vehicle != null
+                                ? `${drain.last_occlusion_pct_by_vehicle.toFixed(1)}%`
+                                : '-'} / {drain.detection_count}회 / {formatTime(drain.last_seen_by_vehicle)}
+                              {drain.reason_code_by_vehicle && ` / ${reasonLabel(drain.reason_code_by_vehicle)}`}
                             </span>
                           </button>
                         </li>
@@ -130,7 +163,7 @@ export default function VehiclePanel({ selectedVehicleId, onSelectVehicle, onSel
                       page={drainPagination.page}
                       totalPages={drainPagination.totalPages}
                       onPageChange={drainPagination.setPage}
-                      label={`${v.vehicle_code} 빗물받이 목록`}
+                      label={`${vehicle.route_name || vehicle.vehicle_code} 빗물받이 목록`}
                     />
                   </>
                 )}
@@ -143,7 +176,7 @@ export default function VehiclePanel({ selectedVehicleId, onSelectVehicle, onSel
         page={vehiclePagination.page}
         totalPages={vehiclePagination.totalPages}
         onPageChange={vehiclePagination.setPage}
-        label="차량 목록"
+        label="노선 목록"
       />
     </div>
   )
