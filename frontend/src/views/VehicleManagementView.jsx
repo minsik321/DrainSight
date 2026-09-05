@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowCounterClockwise, Plus } from '@phosphor-icons/react'
 import PriorityMap, { MapLegend } from '../components/PriorityMap.jsx'
 import VehiclePanel from '../components/VehiclePanel.jsx'
+import Pagination, { usePagination } from '../components/Pagination.jsx'
 
 const VEHICLE_COLUMNS = ['번호', '노선명', '분류', '노선', '운행시간', '부착부위', '순환 횟수']
 const VEHICLE_CATEGORIES = ['버스', '가스차', '쓰레기차', '택시']
@@ -11,6 +12,15 @@ const HOUR_OPTIONS = Array.from(
 )
 const ROUTE_STOP_COUNT = 8
 const VEHICLE_STORAGE_KEY = 'drainsight-registered-vehicles'
+const DEMO_VEHICLE_PRESETS = [
+  { id: 'demo-buldang-01', route_name: '불당01', vehicle_type: '버스', operation_time: '06:00 ~ 22:00', mounting_position: '전면 범퍼 우측', circulation_count: 6 },
+  { id: 'demo-dujeong-01', route_name: '두정01', vehicle_type: '택시', operation_time: '07:00 ~ 19:00', mounting_position: '조수석 하단', circulation_count: 8 },
+  { id: 'demo-ssangyong-01', route_name: '쌍용01', vehicle_type: '가스차', operation_time: '05:00 ~ 14:00', mounting_position: '차량 전면 중앙', circulation_count: 4 },
+  { id: 'demo-cheongsu-01', route_name: '청수01', vehicle_type: '쓰레기차', operation_time: '04:00 ~ 12:00', mounting_position: '전면 범퍼 좌측', circulation_count: 3 },
+  { id: 'demo-sinbang-01', route_name: '신방01', vehicle_type: '버스', operation_time: '08:00 ~ 20:00', mounting_position: '조수석 하단', circulation_count: 5 },
+  { id: 'demo-baekseok-01', route_name: '백석01', vehicle_type: '택시', operation_time: '09:00 ~ 23:00', mounting_position: '차량 전면 중앙', circulation_count: 7 },
+  { id: 'demo-jiksan-01', route_name: '직산01', vehicle_type: '가스차', operation_time: '06:00 ~ 17:00', mounting_position: '전면 범퍼 우측', circulation_count: 4 },
+]
 
 function readStoredVehicles() {
   try {
@@ -49,11 +59,26 @@ function createAutomaticRoute(drains, routeIndex) {
   return route
 }
 
+function createDemoVehicle(preset, drains, routeIndex, number) {
+  const stops = createAutomaticRoute(drains, routeIndex)
+  return {
+    ...preset,
+    number,
+    vehicle_code: `데모 차량 ${number}`,
+    notes: '노선 관측 시연용 차량',
+    stops,
+    route_summary: stops.length > 1
+      ? `${stops[0].name} ··· ${stops[stops.length - 1].name}`
+      : stops[0]?.name || '-',
+  }
+}
+
 export default function VehicleManagementView({ drains, flashIds, selectedId, onSelectDrain }) {
   const [vehicles, setVehicles] = useState(readStoredVehicles)
   const [selectedVehicleId, setSelectedVehicleId] = useState(null)
   const [vehicleMapSelection, setVehicleMapSelection] = useState(null)
   const [formMessage, setFormMessage] = useState('')
+  const vehiclePagination = usePagination(vehicles, 5, { resetKey: vehicles.length })
   const visibleDrainIds = useMemo(
     () => vehicleMapSelection ? new Set(vehicleMapSelection.drainIds) : null,
     [vehicleMapSelection],
@@ -62,6 +87,25 @@ export default function VehicleManagementView({ drains, flashIds, selectedId, on
   useEffect(() => {
     localStorage.setItem(VEHICLE_STORAGE_KEY, JSON.stringify(vehicles))
   }, [vehicles])
+
+  useEffect(() => {
+    if (!drains.length) return
+
+    setVehicles((current) => {
+      const registeredIds = new Set(current.map((vehicle) => vehicle.id))
+      const missingPresets = DEMO_VEHICLE_PRESETS.filter((preset) => !registeredIds.has(preset.id))
+      if (missingPresets.length === 0) return current
+
+      const nextNumber = current.reduce(
+        (highest, vehicle) => Math.max(highest, Number(vehicle.number) || 0),
+        0,
+      ) + 1
+      const demoVehicles = missingPresets.map((preset, index) => (
+        createDemoVehicle(preset, drains, index + 1, nextNumber + index)
+      ))
+      return [...current, ...demoVehicles]
+    })
+  }, [drains])
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -114,7 +158,7 @@ export default function VehicleManagementView({ drains, flashIds, selectedId, on
               </tr>
             </thead>
             <tbody>
-              {vehicles.length > 0 ? vehicles.map((vehicle) => (
+              {vehicles.length > 0 ? vehiclePagination.pageItems.map((vehicle) => (
                 <tr key={vehicle.id}>
                   <td>{vehicle.number}</td>
                   <td title={vehicle.route_name}>{vehicle.route_name}</td>
@@ -134,6 +178,12 @@ export default function VehicleManagementView({ drains, flashIds, selectedId, on
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={vehiclePagination.page}
+          totalPages={vehiclePagination.totalPages}
+          onPageChange={vehiclePagination.setPage}
+          label="등록 차량 목록"
+        />
       </section>
 
       <aside className="fleet-add-card">
