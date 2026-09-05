@@ -5,7 +5,8 @@ import PriorityReasons from './PriorityReasons.jsx'
 import HistoryPanel from './HistoryPanel.jsx'
 import { statusColor, statusLabel, statusDetail, formatTime } from '../format'
 
-// 선택이 해제된 뒤 닫힘 모션이 끝날 때까지 마지막 빗물받이 정보를 유지한다.
+// 선택된 지점의 상세는 뷰를 옮겨도 따라다녀야 한다 — 지도에서 찍은 지점을 우선순위
+// 화면에서 다시 찾게 만들면 안 되기 때문에, 뷰가 아니라 셸에 고정된 우측 패널로 둔다.
 export default function Inspector({
   drain,
   history,
@@ -24,7 +25,9 @@ export default function Inspector({
     if (drain) setVisibleDrain(drain)
   }, [drain])
 
-  if (!visibleDrain) return null
+  if (!visibleDrain) {
+    return null
+  }
 
   const color = statusColor(visibleDrain.last_status)
   const detail = statusDetail(visibleDrain.last_status)
@@ -32,7 +35,7 @@ export default function Inspector({
   return (
     <aside
       className={`inspector ${open && drain ? 'open' : ''}`}
-      aria-label="빗물받이 상세 패널"
+      aria-label="선택한 지점 상세"
       aria-hidden={!open}
       onTransitionEnd={() => {
         if (!open) setVisibleDrain(null)
@@ -56,7 +59,7 @@ export default function Inspector({
               <ArrowRight size={13} weight="bold" />
             </button>
           )}
-          <button type="button" className="inspector-close" onClick={onClose} aria-label="패널 닫기">
+          <button type="button" className="inspector-close" onClick={onClose} aria-label="상세 닫기">
             <X size={16} />
           </button>
         </div>
@@ -74,9 +77,7 @@ export default function Inspector({
             <span>
               <span className="figure-label">차폐율</span>
               <span className="figure-value">
-                {visibleDrain.last_occlusion_pct != null
-                  ? `${visibleDrain.last_occlusion_pct.toFixed(1)}%`
-                  : '-'}
+                {visibleDrain.last_occlusion_pct != null ? `${visibleDrain.last_occlusion_pct.toFixed(1)}%` : '-'}
               </span>
             </span>
             <span>

@@ -1778,60 +1778,433 @@ textarea {
   white-space: nowrap;
 }
 
-.analysis-grid {
+/* ===========================================================================
+   분석 페이지
+   ---------------------------------------------------------------------------
+   list-detail-card와 같은 시각 언어(1px 라인 + 16px 라운드 + 14px 패딩)를
+   범용 .panel로 뽑아 재사용한다. 비교용 막대는 전부 기존 .score-bar를 그대로 쓴다.
+   =========================================================================== */
+
+.analysis-view {
   display: grid;
-  grid-template-columns: repeat(24, minmax(0, 1fr));
-  grid-template-rows: minmax(0, 1.55fr) repeat(2, minmax(0, 1fr));
   gap: 14px;
-  width: 100%;
-  height: 100%;
-  min-height: 560px;
+  align-content: start;
 }
 
-.analysis-card {
+.analysis-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.analysis-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.analysis-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.analysis-mode-note {
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-align: right;
+  line-height: 1.4;
+}
+
+.panel {
   min-width: 0;
-  min-height: 0;
+  background: var(--surface-1);
   border: 1px solid var(--line);
   border-radius: 16px;
+  padding: 14px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 10px;
+  flex-wrap: wrap;
+}
+
+.panel-head h3 {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 740;
+}
+
+.panel-actions {
+  margin-left: auto;
+}
+
+.panel-note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.analysis-summary p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.65;
+}
+
+.analysis-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 18px;
+  align-items: start;
+}
+
+.analysis-summary-meta {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.6;
+  text-align: right;
+}
+
+.analysis-row {
+  display: grid;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.analysis-row-6040 {
+  grid-template-columns: 1.6fr 1fr;
+}
+
+.analysis-row-4555 {
+  grid-template-columns: 1fr 1.2fr;
+}
+
+.analysis-row-5050 {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* 세그먼트 탭 (기간/차트 종류 전환) */
+.segmented-tabs {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--surface-3);
+  border-radius: 999px;
+}
+
+.segmented-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.segmented-tab.active {
   background: var(--surface-1);
+  color: var(--text);
+  font-weight: 620;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
-.analysis-card:nth-child(1) {
-  grid-column: 1 / span 14;
+/* 필터용 셀렉트 */
+.select-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-3);
 }
 
-.analysis-card:nth-child(2) {
-  grid-column: 15 / span 10;
+.select-field select {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
 }
 
-.analysis-card:nth-child(3) {
-  grid-column: 1 / span 5;
-  grid-row: 2;
+/* KPI 카드 */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.analysis-card:nth-child(4) {
-  grid-column: 6 / span 5;
-  grid-row: 2;
+.kpi-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
-.analysis-card:nth-child(5) {
-  grid-column: 11 / span 5;
-  grid-row: 2;
+.kpi-label {
+  font-size: 11px;
+  color: var(--text-3);
 }
 
-.analysis-card:nth-child(6) {
-  grid-column: 16 / span 9;
-  grid-row: 2;
+.kpi-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
 }
 
-.analysis-card:nth-child(7) {
-  grid-column: 1 / span 10;
-  grid-row: 3;
+.kpi-sublabel {
+  font-size: 11.5px;
+  color: var(--text-3);
 }
 
-.analysis-card:nth-child(8) {
-  grid-column: 11 / span 14;
-  grid-row: 3;
+/* 랭크 바 (상태 구성 / 원인 기여도 / 노선·차량 비교 공용) */
+.rank-bar-list {
+  display: grid;
+  gap: 10px;
+}
+
+.rank-bar {
+  display: grid;
+  grid-template-columns: minmax(96px, 160px) minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+}
+
+.rank-bar-ranked {
+  grid-template-columns: 20px minmax(96px, 160px) minmax(0, 1fr) 56px;
+}
+
+.rank-bar-clickable {
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.rank-bar-rank {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.rank-bar-label-group {
+  min-width: 0;
+}
+
+.rank-bar-label {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-bar-meta {
+  display: block;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-bar-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+
+/* 기간별 상태 변화 차트 */
+.trend-chart-svg {
+  width: 100%;
+  height: 220px;
+}
+
+.trend-threshold-line {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
+.trend-threshold-label {
+  fill: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.trend-prev-line {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+
+.trend-axis-line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.trend-coverage-bar {
+  fill: var(--surface-3);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+/* 데이터 품질 통계 */
+.quality-stats {
+  display: grid;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.quality-stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quality-stat-row span {
+  color: var(--text-2);
+}
+
+.quality-stat-row strong {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.quality-warning {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.55;
+}
+
+/* TOP 10 취약 지점 테이블 */
+.top10-table {
+  display: grid;
+}
+
+.top10-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 88px 64px 60px 60px minmax(0, 1fr) 128px 88px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.top10-head {
+  padding: 0 10px 8px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 620;
+  cursor: default;
+}
+
+.top10-rank {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.top10-name-cell {
+  min-width: 0;
+}
+
+.top10-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top10-code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top10-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.top10-muted {
+  color: var(--text-3);
+}
+
+.top10-reason {
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top10-action {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.top10-action.needs-action {
+  color: var(--st-occluded);
+}
+
+.top10-action.ok {
+  color: var(--st-clear);
+}
+
+.top10-empty {
+  padding: 28px 4px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
 }
 
 .fleet-management-view {
@@ -4070,16 +4443,29 @@ textarea {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .analysis-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: none;
-    grid-auto-rows: minmax(170px, 1fr);
-    height: auto;
-    min-height: 0;
+  .analysis-row-6040,
+  .analysis-row-4555,
+  .analysis-row-5050 {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .analysis-card:nth-child(n) {
-    grid-column: auto;
-    grid-row: auto;
+  .analysis-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .analysis-summary-meta {
+    text-align: left;
+  }
+  .kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .top10-row {
+    grid-template-columns: 24px minmax(0, 1fr) 56px 64px;
+  }
+  .top10-row > :nth-child(3),
+  .top10-row > :nth-child(5),
+  .top10-row > :nth-child(6),
+  .top10-row > :nth-child(7),
+  .top10-row > :nth-child(8) {
+    display: none;
   }
   .fleet-management-view {
     grid-template-columns: minmax(0, 1fr);
@@ -4164,8 +4550,14 @@ textarea {
    =========================================================================== */
 
 @media (max-width: 560px) {
-  .analysis-grid {
+  .kpi-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .analysis-toolbar-right {
+    flex-wrap: wrap;
+  }
+  .analysis-mode-note {
+    text-align: left;
   }
 }
 
