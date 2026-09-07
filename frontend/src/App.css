@@ -599,6 +599,12 @@ body {
   font-weight: 600;
 }
 
+/* KMA_API_KEY 미설정 등으로 실제 예보 대신 데모용 추정값을 쓰고 있을 때 — 수동 전환과는
+   다른 원인(발표자 선택 vs 시스템 제약)이라 색을 구분한다 */
+.mode-chip-dummy {
+  color: var(--text-3);
+}
+
 .mode-chip.mode-heavy_rain {
   border-color: var(--danger-border);
 }
@@ -2067,6 +2073,12 @@ textarea {
   stroke: var(--text-3);
   stroke-width: 2;
   stroke-dasharray: 5 5;
+}
+
+/* 천안 ASOS 실측(또는 데모용 폴백) 강수량 막대 — 차폐율 라인 뒤에 옅게 깔린다 */
+.trend-rainfall-bar {
+  fill: var(--accent);
+  opacity: 0.16;
 }
 
 .trend-axis-line {
@@ -3804,6 +3816,31 @@ textarea {
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: 10.5px;
+}
+
+/* 각 지표의 출처 배지 — live(실측 API/실기기)·demo(시뮬레이터)·static(수동 입력/자동 계산값) */
+.reason-metric-source {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.reason-metric-source-live {
+  background: var(--success-dim, rgba(94, 190, 140, 0.16));
+  color: var(--success, #4caf7d);
+}
+
+.reason-metric-source-demo {
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+
+.reason-metric-source-static {
+  background: var(--surface-3);
+  color: var(--text-3);
 }
 
 .reason-metric-value {

@@ -32,6 +32,8 @@
 >
 > v2.14 개정 요약 (BLOCKED/OCCLUDED 차폐율 경계값 역전 수정, 2.1·3·9.3절): `edge/infer.py::classify()`가 차폐율 15~60%를 `BLOCKED`(막힘), 60% 이상을 `OCCLUDED`(부분 차폐)로 분류하고 있었다 — "막힘"이 "부분 차폐"보다 심각한 상태라는 국문 어감, 그리고 대시보드가 이미 BLOCKED를 더 위험한 색(빨강)·지도 범례 상위로 취급하던 기존 관례와 정확히 반대였다. 차폐율이 낮을수록(부분적으로만 가려짐) `OCCLUDED`, 높을수록(사실상 완전히 막힘) `BLOCKED`로 배정하도록 경계값을 맞바꿨다(`infer.py`의 `BLOCKED_MAX_PCT` 상수를 `OCCLUDED_MAX_PCT`로 개명). 같은 이유로 엣지 방문 집계(`run.py::aggregate_visit`)의 동률 심각도 우선순위도 `BLOCKED > OCCLUDED > CLEAR`로 맞바꿨다. 데모 시드 데이터(`db/drains_seed.json`)의 기존 판정 92건 중 두 상태가 뒤바뀌어 있던 36건도 함께 정정했다.
 
+> v2.15 개정 요약 (분석 페이지 예시 추이 차트를 실측 데이터로 교체 + 실제 공공데이터(기상청 ASOS) 신규 연동, 9.4·9.5절): 분석 페이지의 "기간별 상태 변화" 차트가 그동안 `frontend/src/analyticsTrendFixture.js`의 예시 값을 그리고 있었다 — `detections`가 append-only 로그로 원본은 이미 쌓여 있었지만 일자별 집계 엔드포인트가 없었을 뿐이다. 신규 `GET /api/analytics/trend`(`backend/analytics.py`)가 이 로그를 기간별(오늘=4시간×6구간, 7일=일 단위, 30일=주 단위)로 직접 집계해 그 자리를 대체한다. 구간 일부에만 표본이 없으면 직전 구간 값을 이어 그리고, 기간 전체에 표본이 하나도 없으면(데모 당일 아직 차량이 안 지나간 '오늘' 탭 등) 0으로 눕는 그래프 대신 현재 스냅샷 평균 차폐율에 수렴하는 결정론적 시연용 대체 추이(`_dummy_trend_points`)로 바꿔치기한다 — forecast.py/rainfall.py와 같은 폴백 원칙이며, `has_data`/`source`(`real`/`dummy`) 필드로 실측 여부를 화면에 계속 정직하게 밝힌다. 여기에 더해, 기상청 공공데이터포털의 "지상(종관, ASOS) 일자료 조회서비스"(과거 실측 일강수량)를 신규 연동(`backend/rainfall.py`)해 같은 응답에 실어, 차폐율 추이 위에 실제 강수 이력을 겹쳐 보여준다 — forecast.py의 단기예보(미래 예측)와 달리 이건 이미 지나간 날짜의 실측값이라는 점이 다르다. KMA_API_KEY는 단기예보와 같은 값을 재사용하지만 공공데이터포털은 API 상품별 별도 활용신청이 필요해, 신청 전이거나 실패 시엔 elevation.py/flood.py와 같은 원칙으로 결정론적 더미값에 `source: dummy`를 붙여 폴백한다(신청 후엔 `source: real`). 천안 ASOS 관측소 지점번호(232)는 여러 공개 자료 기준으로 채택했으며 기상청 지점정보 조회서비스로 공식 대조는 아직 못 했다는 한계를 명시한다.
+
 ## 1. 프로젝트 개요
 
 ### 1.1 문제 정의
@@ -316,6 +318,8 @@ CREATE INDEX idx_drain_routes_route_id ON drain_routes(route_id);
 | GET | `/api/vehicles/{id}/drains` | 특정 차량의 실제 판정만 조회하며 시스템 이벤트는 섞지 않음. 차량 선택 시 해당 지점을 지도에 표시 | 프론트 차량별 조회 패널·지도 |
 | GET | `/api/elevation` | 위경도로 실제 지대 고도 조회(Open-Elevation API 연동, v2.4 신규) — drains_seed.json에 실측값을 채워넣는 용도 | 발표자 수동 조회 |
 | GET | `/api/flood-zone`(`/raw`) | 위경도로 행안부 생활안전지도 침수흔적 조회(SAFEMAP_API_KEY 필요, 응답 필드명 미확정이라 `/raw`로 원본 노출) — drains_seed.json의 is_flood_zone을 채워넣는 용도 | 발표자 수동 조회 |
+| GET | `/api/analytics/trend` | 분석 페이지 "기간별 상태 변화" 차트용. `period=today\|7d\|30d`로 `detections` 원본을 기간별 집계(상태별 건수·평균 차폐율·누적 점검 커버리지)하고, today가 아니면 같은 구간 경계로 실측 강수량(mm)도 합산해 함께 내려준다(v2.15 신규) | 프론트 분석 페이지 |
+| GET | `/api/analytics/rainfall` | 천안 ASOS 관측소 실측 일강수량(mm) 단독 조회 — 키 미설정/활용신청 전/호출 실패 시 결정론적 더미값 폴백, `source`(real/dummy)로 구분(v2.15 신규) | 발표자 수동 조회 |
 
 인증/인가는 MVP 범위에서 제외한다(로드맵 항목: 실 서비스 전환 시 API 키 또는 JWT 인증 추가 필요). 데모 환경은 폐쇄망(현장 Wi-Fi 공유기)에서만 구동되므로 리스크가 제한적이다.
 
@@ -337,6 +341,8 @@ drain-vision-pod/
 │   ├── routing.py           # 위치 군집 + 순수 거리 기준 최근접 이웃/2-opt·or-opt(OSRM, 실패 시 haversine)
 │   ├── elevation.py         # Open-Elevation API 연동 (v2.4 신규)
 │   ├── flood.py             # 행안부 생활안전지도 침수흔적 조회 (응답 필드명 미확정, 신규)
+│   ├── analytics.py          # detections 기간별 집계 (분석 페이지 추이 차트, v2.15 신규)
+│   ├── rainfall.py           # 기상청 ASOS 일자료(실측 과거 강수량) 조회 (v2.15 신규)
 │   ├── geo.py               # haversine 거리 계산 공용 함수
 │   ├── .env / .env.example   # KMA_API_KEY 등 비밀값 분리 (v2.4 신규)
 │   ├── drainvision.db      # SQLite 파일 (init.sql로 최초 1회 초기화, git에는 미포함)

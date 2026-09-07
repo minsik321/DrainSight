@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowsLeftRight, DownloadSimple } from '@phosphor-icons/react'
-import { fetchAllSystemEvents, fetchVehicleDrains, fetchVehicles } from '../api'
+import { fetchAllSystemEvents, fetchAnalyticsTrend, fetchVehicleDrains, fetchVehicles } from '../api'
 import { daysSince, formatTime, statusColor, statusLabel, weatherModeLabel } from '../format'
-import { TREND_FIXTURE } from '../analyticsTrendFixture'
 
 const STATUS_ORDER = ['CLEAR', 'OCCLUDED', 'BLOCKED', 'UNASSESSABLE']
+// 분석 페이지 기간 탭('오늘'/'7일'/'30일') -> 백엔드 /api/analytics/trend의 period 값.
+const PERIOD_API_MAP = { '오늘': 'today', '7일': '7d', '30일': '30d' }
 const CAUSE_LABELS = { occlusion: '차폐율', staleness: '미점검 경과', flood_history: '침수 이력', elevation: '고도 위험도' }
 const CAUSE_COLORS = {
   occlusion: 'var(--st-blocked)',
@@ -90,9 +91,10 @@ function StatRow({ label, value }) {
   )
 }
 
-// 세 가지 모드를 전환하는 하나의 차트. 차폐율/상태 건수/점검 범위 모두 현재는
-// analyticsTrendFixture.js의 예시 데이터로 그린다(파일 상단 주석 참고).
-function TrendChart({ points, mode, compareOn, threshold }) {
+// 세 가지 모드를 전환하는 하나의 차트. 실측 데이터는 /api/analytics/trend에서 온다
+// (backend/analytics.py가 detections 원본을 집계). 차폐율 모드에서는 같은 응답에 실린
+// rainfall_mm(천안 ASOS 실측/더미 강수량, backend/rainfall.py)을 막대로 겹쳐 보여준다.
+function TrendChart({ points, mode, compareOn, threshold, showRainfall }) {
   const W = 640
   const H = 220
   const P = 32
@@ -104,8 +106,10 @@ function TrendChart({ points, mode, compareOn, threshold }) {
   if (mode === '차폐율') {
     const y = (v) => P + IH - (Math.max(0, Math.min(100, v)) / 100) * IH
     const line = points.map((p, i) => `${x(i)},${y(p.occ)}`).join(' ')
-    const prevLine = points.map((p, i) => `${x(i)},${y(p.prevOcc)}`).join(' ')
+    const prevLine = points.map((p, i) => `${x(i)},${y(p.prevOcc ?? p.occ)}`).join(' ')
     const ty = y(threshold)
+    const maxRain = showRainfall ? Math.max(1, ...points.map((p) => p.rainfall_mm || 0)) : 1
+    const rainBw = Math.min(28, step * 0.5)
     return (
       <svg viewBox={`0 0 ${W} ${H}`} className="trend-chart-svg" role="img" aria-label="차폐율 추이">
         {[0, 25, 50, 75, 100].map((t) => (
@@ -114,6 +118,20 @@ function TrendChart({ points, mode, compareOn, threshold }) {
             <text className="chart-tick" x={4} y={y(t) + 4}>{t}</text>
           </g>
         ))}
+        {showRainfall && points.map((p, i) => {
+          const mm = p.rainfall_mm || 0
+          const h = (mm / maxRain) * IH
+          return mm > 0 ? (
+            <rect
+              key={`rain${i}`}
+              x={x(i) - rainBw / 2}
+              y={P + IH - h}
+              width={rainBw}
+              height={h}
+              className="trend-rainfall-bar"
+            />
+          ) : null
+        })}
         <line x1={P} x2={W - P} y1={ty} y2={ty} className="trend-threshold-line" />
         <text x={W - P} y={ty - 6} className="trend-threshold-label" textAnchor="end">조치 기준 {threshold}%</text>
         {compareOn && <polyline points={prevLine} className="trend-prev-line" />}
@@ -221,8 +239,9 @@ function Top10Table({ rows, onOpen }) {
 // 분석 — 요약 → 변화 → 원인 → 위치·차량 → 실제 지점.
 // 상태 구성, 우선순위 원인 기여도, 노선/차량별 비교, TOP 10, 조치 성과, 데이터 품질은
 // 모두 현재 drains 스냅샷 + 실시간 조회한 vehicles/system-events에서 계산한다.
-// "기간별 상태 변화" 추이 차트만 analyticsTrendFixture.js의 예시 데이터를 쓴다
-// (그 파일 상단 주석에 이유 설명).
+// "기간별 상태 변화" 추이 차트는 /api/analytics/trend(backend/analytics.py)가 detections
+// 원본을 집계한 실측값이며, 차폐율 모드의 강수량 막대는 같은 응답에 실린 천안 ASOS
+// 실측/폴백 강수량(backend/rainfall.py)이다.
 export default function AnalysisView({ drains, weatherAlert, onOpenDrain }) {
   const [period, setPeriod] = useState('7일')
   const [compareOn, setCompareOn] = useState(true)
@@ -237,9 +256,22 @@ export default function AnalysisView({ drains, weatherAlert, onOpenDrain }) {
   const [vehicleDrainsByVehicle, setVehicleDrainsByVehicle] = useState({})
   const [systemEvents, setSystemEvents] = useState([])
   const [loadError, setLoadError] = useState(null)
+  const [trend, setTrend] = useState(null)
+  const [trendLoading, setTrendLoading] = useState(true)
 
   const alert = weatherAlert || {}
   const weightProfile = alert.weight_profile || {}
+
+  // "기간별 상태 변화" 차트 — backend/analytics.py가 detections 원본을 집계한 실측값.
+  useEffect(() => {
+    let cancelled = false
+    setTrendLoading(true)
+    fetchAnalyticsTrend(PERIOD_API_MAP[period])
+      .then((data) => !cancelled && setTrend(data))
+      .catch((e) => !cancelled && setLoadError(e.message))
+      .finally(() => !cancelled && setTrendLoading(false))
+    return () => { cancelled = true }
+  }, [period])
 
   useEffect(() => {
     let cancelled = false
@@ -379,7 +411,8 @@ export default function AnalysisView({ drains, weatherAlert, onOpenDrain }) {
   }, [routeRows, contribution, total, assessedCount, actionCount])
 
   const modeLabel = weatherModeLabel(alert.mode)
-  const trendPack = TREND_FIXTURE[period] || TREND_FIXTURE['7일']
+  const trendPack = trend?.points || []
+  const trendHasRainfall = period !== '오늘' && trendPack.some((p) => p.rainfall_mm != null)
 
   const totalMissing = Object.values(missingByVehicle).reduce((s, v) => s + v.count, 0)
   const worstMissingVehicleId = Object.entries(missingByVehicle).sort((a, b) => b[1].count - a[1].count)[0]?.[0]
@@ -466,8 +499,22 @@ export default function AnalysisView({ drains, weatherAlert, onOpenDrain }) {
               <SegmentedTabs options={['차폐율', '상태 건수', '점검 범위']} value={chartMode} onChange={setChartMode} label="차트 종류" />
             </span>
           </div>
-          <TrendChart points={trendPack} mode={chartMode} compareOn={compareOn} threshold={alert.occlusion_threshold ?? 70} />
-          <p className="panel-note">예시 추이입니다 — 일자별 실측 이력 집계 기능이 추가되면 실데이터로 교체됩니다.</p>
+          <TrendChart
+            points={trendPack}
+            mode={chartMode}
+            compareOn={compareOn}
+            threshold={alert.occlusion_threshold ?? 70}
+            showRainfall={chartMode === '차폐율' && trendHasRainfall}
+          />
+          <p className="panel-note">
+            {trendLoading && '불러오는 중…'}
+            {!trendLoading && trend?.source === 'dummy' && '이 기간에 쌓인 판정 이력이 아직 부족해 데모용 추정 추이로 대신 표시했습니다(실측 아님).'}
+            {!trendLoading && trend?.source === 'real' && (
+              trendHasRainfall
+                ? `detections 실측 집계입니다. 옅은 막대는 천안 관측소 ${trend.rainfall_source === 'real' ? '실측' : '데모용 추정'} 강수량(mm)입니다.`
+                : 'detections 실측 집계입니다.'
+            )}
+          </p>
         </section>
         <section className="panel">
           <div className="panel-head"><h3>현재 상태 구성</h3></div>

@@ -17,9 +17,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import analytics
 import elevation
 import flood
 import forecast
+import rainfall
 import routing
 from geo import haversine_m
 from models import Base, Detection, Drain, SystemEvent, Vehicle
@@ -92,6 +94,7 @@ if not DB_PATH.exists():
         captured_at = seed_now - timedelta(days=float(item.get("captured_days_ago", 0)))
         status = item["status"]
         occlusion_pct = item.get("occlusion_pct")
+        detection_source = item.get("source", "simulator")
         conn.execute(
             "INSERT INTO detections "
             "(drain_id, vehicle_id, status, reason_code, occlusion_pct, confidence, source, captured_at) "
@@ -103,20 +106,21 @@ if not DB_PATH.exists():
                 item.get("reason_code"),
                 occlusion_pct,
                 item.get("confidence"),
-                item.get("source", "simulator"),
+                detection_source,
                 captured_at,
             ),
         )
-        seeded_by_drain.setdefault(drain_id, []).append((captured_at, status, occlusion_pct))
+        seeded_by_drain.setdefault(drain_id, []).append((captured_at, status, occlusion_pct, detection_source))
 
     for drain_id, rows in seeded_by_drain.items():
         rows.sort(key=lambda r: r[0])
-        _, latest_status, latest_occlusion = rows[-1]
+        _, latest_status, latest_occlusion, latest_source = rows[-1]
         real_rows = [r for r in rows if r[1] != "UNASSESSABLE"]
         last_updated = real_rows[-1][0] if real_rows else None
         conn.execute(
-            "UPDATE drains SET last_status = ?, last_occlusion_pct = ?, last_updated = ? WHERE id = ?",
-            (latest_status, latest_occlusion, last_updated, drain_id),
+            "UPDATE drains SET last_status = ?, last_occlusion_pct = ?, last_updated = ?, last_source = ? "
+            "WHERE id = ?",
+            (latest_status, latest_occlusion, last_updated, latest_source, drain_id),
         )
     for item in seed.get("system_events", []):
         conn.execute(
@@ -148,6 +152,21 @@ with sqlite3.connect(DB_PATH) as migration_conn:
     }
     if "reason_code" not in detection_columns:
         migration_conn.execute("ALTER TABLE detections ADD COLUMN reason_code VARCHAR(40)")
+    drain_columns = {
+        row[1] for row in migration_conn.execute("PRAGMA table_info(drains)").fetchall()
+    }
+    if "last_source" not in drain_columns:
+        # "pi"(실기기)/"simulator"(데모) 중 어느 쪽 판정이 현재 스냅샷을 채웠는지 — 이미
+        # detections.source에 있던 값을 drains 레벨 스냅샷으로도 올려서, PriorityReasons.jsx가
+        # 매번 이력을 다시 조회하지 않고도 "이 차폐율이 실기기/데모 중 어디서 왔는지" 보여줄 수
+        # 있게 한다(last_status/last_occlusion_pct와 같은 스냅샷 패턴, v2.17).
+        migration_conn.execute("ALTER TABLE drains ADD COLUMN last_source VARCHAR(20)")
+        migration_conn.execute(
+            "UPDATE drains SET last_source = ("
+            "SELECT d.source FROM detections d WHERE d.drain_id = drains.id "
+            "ORDER BY d.captured_at DESC LIMIT 1"
+            ")"
+        )
     migration_conn.execute(
         "UPDATE detections SET status = 'UNASSESSABLE', reason_code = 'DRAIN_NOT_DETECTED' "
         "WHERE status = 'UNDETECTED'"
@@ -226,6 +245,10 @@ weather_alert_state: dict = {
     # True면 발표자가 데모용으로 강제 고정한 모드 — refresh_weather_alert(실제 예보 갱신)가
     # 건드리지 않고, /api/weather/mode에 mode="AUTO"를 보내야만 풀린다(v2.9).
     "manual_override": False,
+    # "real"(실제 KMA 응답) / "dummy"(KMA_API_KEY 미설정·호출 실패로 인한 결정론적 대체값) /
+    # "manual"(발표자가 강제 전환) — ModeControl.jsx가 "기상청 단기예보로 자동 판정 중"이라고
+    # 잘못 말하는 걸 막기 위한 필드(v2.16, rainfall.py의 source 필드와 같은 원칙).
+    "weather_source": None,
 }
 
 
@@ -299,10 +322,14 @@ def _apply_weather_mode(
     pcp_mm: float | None = None,
     pcp_3h_mm: float | None = None,
     manual: bool = False,
+    source: str | None = None,
 ) -> None:
     """weather_alert_state의 모드-파생 필드(게이트 임계값·가중치·배너)를 채운다. 실제 예보
     갱신(refresh_weather_alert)과 발표자용 수동 전환(set_weather_mode)이 이 로직을 공유한다.
-    pop/pcp_mm/pcp_3h_mm을 안 주면(수동 전환) 마지막으로 관측된 값을 그대로 유지한다."""
+    pop/pcp_mm/pcp_3h_mm을 안 주면(수동 전환) 마지막으로 관측된 값을 그대로 유지한다.
+    source는 항상 명시적으로 갱신한다("real"/"dummy"/"manual") — manual=True인 호출은
+    source 인자와 무관하게 항상 "manual"로 덮어써 발표자가 강제한 모드가 실수로 real/dummy로
+    보이지 않게 한다."""
     active = mode == forecast.HEAVY_RAIN
     threshold = forecast.OCCLUSION_ACTION_THRESHOLD[mode]
     staleness_days = forecast.STALENESS_THRESHOLD_DAYS[mode]
@@ -316,6 +343,7 @@ def _apply_weather_mode(
         "elevation": w1, "flood_history": w2, "staleness": w3, "occlusion": w4,
     }
     weather_alert_state["issued_at"] = datetime.utcnow().isoformat()
+    weather_alert_state["weather_source"] = "manual" if manual else source
     if pop is not None:
         weather_alert_state["rain_prob"] = pop
     if pcp_mm is not None:
@@ -331,8 +359,9 @@ def _apply_weather_mode(
             f"(점검 기준 차폐율 {threshold:.0f}%·미점검 {staleness_days:.0f}일로 하향)"
         )
     else:
+        dummy_tag = "[데모용 추정값 — KMA_API_KEY 미설정] " if weather_alert_state["weather_source"] == "dummy" else ""
         weather_alert_state["message"] = (
-            f"내일 천안시 전역에 강수확률 {weather_alert_state['rain_prob']:.0f}% 호우 예보 — "
+            f"{dummy_tag}내일 천안시 전역에 강수확률 {weather_alert_state['rain_prob']:.0f}% 호우 예보 — "
             f"전체 구간 사전 준설 점검 권장 (점검 기준 차폐율 {threshold:.0f}%·미점검 {staleness_days:.0f}일로 하향)"
         )
 
@@ -354,7 +383,8 @@ async def refresh_weather_alert() -> None:
         return
     weather = forecast.fetch_tomorrow_weather()
     _apply_weather_mode(
-        weather["mode"], pop=weather["pop"], pcp_mm=weather["pcp_mm"], pcp_3h_mm=weather["pcp_3h_mm"]
+        weather["mode"], pop=weather["pop"], pcp_mm=weather["pcp_mm"], pcp_3h_mm=weather["pcp_3h_mm"],
+        source=weather["source"],
     )
     await manager.broadcast({"type": "weather_alert", **weather_alert_state})
 
@@ -385,6 +415,7 @@ async def create_detection(payload: DetectionCreate):
 
         drain.last_status = payload.status
         drain.last_occlusion_pct = payload.occlusion_pct
+        drain.last_source = payload.source
         # UNASSESSABLE은 "측정 실패"이지 실측이 아니므로 미점검 경과일 시계(last_updated)를
         # 갱신하지 않는다 — 안 그러면 판정 불가가 반복될 때마다 "방금 확인함"으로 보여서
         # needs_action의 staleness 게이트가 절대 시급해지지 않는다(2.2-2절, v2.14).
@@ -536,7 +567,8 @@ async def set_weather_mode(payload: WeatherModeRequest):
             weather_alert_state["manual_override"] = False
             weather = forecast.fetch_tomorrow_weather()
             _apply_weather_mode(
-                weather["mode"], pop=weather["pop"], pcp_mm=weather["pcp_mm"], pcp_3h_mm=weather["pcp_3h_mm"]
+                weather["mode"], pop=weather["pop"], pcp_mm=weather["pcp_mm"], pcp_3h_mm=weather["pcp_3h_mm"],
+                source=weather["source"],
             )
         else:
             weather_alert_state["manual_override"] = True
@@ -779,6 +811,53 @@ def vehicle_drains(vehicle_id: int):
         return results
     finally:
         db.close()
+
+
+@app.get("/api/analytics/trend")
+def analytics_trend(period: str = "7d"):
+    """분석 페이지 "기간별 상태 변화" 차트용 실측 집계. period는 today/7d/30d만 허용 —
+    프런트의 '오늘'/'7일'/'30일' 탭이 이 값으로 매핑된다(frontend/src/api.js 참고).
+    이전에는 analyticsTrendFixture.js의 예시 데이터를 대신 그렸으나, 이 엔드포인트가
+    detections 원본을 직접 집계해 대체한다(analytics.py).
+
+    period가 today가 아니면 각 구간(day/week 버킷)에 실측 일강수량(rainfall.py)을 같은
+    버킷 경계로 합산해 point.rainfall_mm으로 함께 내려준다 — 프런트에서 날짜 문자열을
+    다시 매칭할 필요 없이 정확히 같은 구간 정의로 겹쳐 그릴 수 있다. today는 ASOS가
+    일 단위라 시간별 버킷과 맞출 수 없어 rainfall_mm을 붙이지 않는다."""
+    if period not in analytics.PERIOD_LENGTHS:
+        raise HTTPException(status_code=400, detail=f"unsupported period: {period}")
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        trend = analytics.compute_status_trend(db, period, now)
+        if period == "today":
+            trend["rainfall_source"] = None
+            return trend
+
+        buckets = analytics.bucket_ranges(period, now)
+        days_needed = max(1, (now.date() - buckets[0][0].date()).days)
+        rain_points = rainfall.fetch_daily_rainfall(days=days_needed)
+        rain_by_date = {p["date"]: p["rainfall_mm"] for p in rain_points}
+        trend["rainfall_source"] = rain_points[0]["source"] if rain_points else None
+
+        for (start, end, _label), point in zip(buckets, trend["points"]):
+            total_mm = 0.0
+            d = start.date()
+            while d < end.date():
+                total_mm += rain_by_date.get(d.isoformat(), 0.0)
+                d += timedelta(days=1)
+            point["rainfall_mm"] = round(total_mm, 1)
+        return trend
+    finally:
+        db.close()
+
+
+@app.get("/api/analytics/rainfall")
+def analytics_rainfall(days: int = 30):
+    """천안 ASOS 관측소 실측 일강수량(mm) — 분석 페이지 추이 차트에 강수 이력을 겹쳐
+    보여주는 용도(rainfall.py). KMA_API_KEY 미설정/API 활용신청 전/호출 실패 시 결정론적
+    더미값으로 폴백하며, 각 항목의 source 필드로 실측/더미 여부를 구분한다."""
+    return {"days": days, "points": rainfall.fetch_daily_rainfall(days=days)}
 
 
 @app.websocket("/ws/dashboard")

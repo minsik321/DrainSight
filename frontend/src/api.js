@@ -79,6 +79,13 @@ export async function fetchVehicleDrains(vehicleId) {
   return res.json()
 }
 
+// period: 'today' | '7d' | '30d' — 분석 페이지 기간 탭('오늘'/'7일'/'30일')이 이 값으로 매핑된다.
+export async function fetchAnalyticsTrend(period) {
+  const res = await fetch(`${API_BASE}/api/analytics/trend?period=${period}`)
+  if (!res.ok) throw new Error(`GET /api/analytics/trend ${res.status}`)
+  return res.json()
+}
+
 export async function resolveDrain(drainId, note) {
   const res = await fetch(`${API_BASE}/api/drains/${drainId}/resolve`, {
     method: 'POST',
