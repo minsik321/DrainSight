@@ -197,10 +197,16 @@ def fetch_tomorrow_weather(lat: float = CHEONAN_CITY_HALL_LAT, lng: float = CHEO
     반환하는 `pcp_mm`은 표시용 참고값(내일 예상되는 시간당 최대 강수량 1개)이고, 실제 날씨 모드
     판정(`classify_weather_mode`)에는 `pcp_3h_mm`(하루 중 어느 3시간이든 최대 누적치, v2.11)을
     쓴다 — 기상청 호우주의보/경보가 3시간 누적 기준이라 그와 같은 단위로 비교해야 하기 때문.
-    """
-    if not KMA_API_KEY:
-        pop = _dummy_tomorrow_rain_prob()
-        return {"pop": pop, "pcp_mm": None, "pcp_3h_mm": None, "mode": classify_weather_mode(pop, None)}
+`source`("real"/"dummy")는 rainfall.py와 같은 원칙으로, 이 판정이 실제 KMA 응답에서 왔는지
+     (KMA_API_KEY 미설정/네트워크 실패 시) 결정론적 더미값으로 대체됐는지를 밝힌다 — main.py가
+     이를 weather_alert_state["weather_source"]로 그대로 전달해 대시보드 모드 배지에 노출한다.
+     """
+     if not KMA_API_KEY:
+         pop = _dummy_tomorrow_rain_prob()
+         return {
+             "pop": pop, "pcp_mm": None, "pcp_3h_mm": None,
+             "mode": classify_weather_mode(pop, None), "source": "dummy",
+         }
 
     try:
         nx, ny = latlng_to_grid(lat, lng)
@@ -231,16 +237,20 @@ def fetch_tomorrow_weather(lat: float = CHEONAN_CITY_HALL_LAT, lng: float = CHEO
         pop = max(pop_values) if pop_values else _dummy_tomorrow_rain_prob()
         pcp_mm = max(hourly_pcp.values()) if hourly_pcp else None
         pcp_3h_mm = _max_rolling_3h_pcp(hourly_pcp)
-        return {
+return {
             "pop": pop,
             "pcp_mm": pcp_mm,
             "pcp_3h_mm": pcp_3h_mm,
             "mode": classify_weather_mode(pop, pcp_3h_mm),
+            "source": "real",
         }
-    except Exception:
+except Exception:
         # 타임아웃/네트워크 오류/응답 형식 이상 등 어떤 실패든 데모 진행을 막지 않도록 폴백 처리
         pop = _dummy_tomorrow_rain_prob()
-        return {"pop": pop, "pcp_mm": None, "pcp_3h_mm": None, "mode": classify_weather_mode(pop, None)}
+        return {
+            "pop": pop, "pcp_mm": None, "pcp_3h_mm": None,
+            "mode": classify_weather_mode(pop, None), "source": "dummy",
+        }
 
 
 def elevation_risk(elevation: float | None, min_elev: float | None, max_elev: float | None) -> float:

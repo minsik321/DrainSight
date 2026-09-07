@@ -29,8 +29,11 @@ export default function ModeControl({ alert, busy, onSetMode }) {
 
   if (!alert) return null
 
-  const mode = alert.mode || 'NORMAL'
+const mode = alert.mode || 'NORMAL'
   const manual = Boolean(alert.manual_override)
+  // weather_source: "real"(실제 KMA 응답) / "dummy"(KMA_API_KEY 미설정·호출 실패로 대체된
+  // 결정론적 값) / "manual"(발표자 강제 전환). manual_override와 별개로 관리되므로 둘 다 확인.
+  const isDummy = !manual && alert.weather_source === 'dummy'
 
   function pick(next) {
     onSetMode(next)
@@ -51,13 +54,16 @@ export default function ModeControl({ alert, busy, onSetMode }) {
           차폐 {alert.occlusion_threshold ?? 70}% / {alert.staleness_threshold_days ?? 14}일
         </span>
         {manual && <span className="mode-chip-manual">수동</span>}
+        {isDummy && <span className="mode-chip-manual mode-chip-dummy">데모</span>}
         <CaretDown size={12} weight="bold" />
       </button>
 
       {open && (
         <div className="mode-popover" role="dialog" aria-label="날씨 모드 전환">
           <p className="mode-popover-head">
-            {manual ? '수동으로 고정된 모드입니다.' : '기상청 단기예보로 자동 판정 중입니다.'}
+            {manual && '수동으로 고정된 모드입니다.'}
+            {!manual && isDummy && 'KMA_API_KEY 미설정(또는 호출 실패)으로 데모용 추정값을 쓰고 있습니다 — 실제 예보 아님.'}
+            {!manual && !isDummy && '기상청 단기예보로 자동 판정 중입니다.'}
           </p>
 
           <div className="mode-options">

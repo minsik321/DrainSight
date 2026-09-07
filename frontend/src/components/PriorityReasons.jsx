@@ -5,6 +5,28 @@ const METRICS = [
   { key: 'staleness_risk', label: '미점검 경과', weightKey: 'staleness' },
 ]
 
+// 각 지표가 어디서 왔는지 — analytics.py/rainfall.py/weather_source와 같은 "출처를 숨기지
+// 않는다" 원칙을 우선순위 근거 패널까지 확장(v2.17). 차폐율만 drain마다 달라질 수 있어
+// last_source(가장 최근 판정을 보낸 쪽)로 동적으로 판정하고, 나머지 세 지표는 이 시스템에서
+// 항상 같은 방식으로 채워지는 정적 값이라 고정 라벨을 쓴다.
+function sourceLabel(key, drain) {
+  if (key === 'occlusion_norm') {
+    if (drain.last_source === 'pi') return { text: '실기기 판정', tone: 'live' }
+    if (drain.last_source === 'simulator') return { text: '데모(시뮬레이터)', tone: 'demo' }
+    return null // 한 번도 판정된 적 없음 — value 자체가 '-'로 표시되므로 배지 불필요
+  }
+  if (key === 'elevation_risk') {
+    return drain.elevation != null ? { text: 'Open-Elevation 실측', tone: 'live' } : null
+  }
+  if (key === 'flood_history_flag') {
+    return { text: '수동 입력값', tone: 'static' }
+  }
+  if (key === 'staleness_risk') {
+    return { text: '자동 계산값', tone: 'static' }
+  }
+  return null
+}
+
 export default function PriorityReasons({ drain, weightProfile }) {
   if (!drain) return null
 
@@ -30,12 +52,18 @@ export default function PriorityReasons({ drain, weightProfile }) {
             const value = drain[m.key]
             const weight = weightProfile?.[m.weightKey]
             const inactive = weight === 0
-            const fill = value != null ? Math.max(0, Math.min(1, value)) : 0
+const fill = value != null ? Math.max(0, Math.min(1, value)) : 0
+            const source = sourceLabel(m.key, drain)
             return (
               <div className={`reason-metric ${inactive ? 'reason-metric-inactive' : ''}`} key={m.key}>
                 <span className="reason-metric-label">
                   {m.label}
                   {weight != null && <span className="reason-metric-weight"> ×{weight.toFixed(2)}</span>}
+                  {source && (
+                    <span className={`reason-metric-source reason-metric-source-${source.tone}`}>
+                      {source.text}
+                    </span>
+                  )}
                 </span>
                 <span className="reason-metric-value">{value != null ? value.toFixed(2) : '-'}</span>
                 <span className="score-bar">

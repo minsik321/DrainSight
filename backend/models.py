@@ -40,8 +40,9 @@ class Drain(Base):
     flood_history_flag = Column(Float)
     staleness_risk = Column(Float)
     occlusion_norm = Column(Float)
-    last_status = Column(String(20))
+last_status = Column(String(20))
     last_occlusion_pct = Column(Float)
+    last_source = Column(String(20))  # 최신 판정을 보낸 쪽 — "pi"(실기기) / "simulator"(데모), v2.17
     last_updated = Column(DateTime)
     maintenance_note = Column(Text)
     maintenance_resolved_at = Column(DateTime)

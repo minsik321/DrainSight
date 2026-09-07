@@ -13,6 +13,7 @@ export default function RouteMapModal({ route, onClose }) {
 
   const mapTeam = useMemo(() => ({
     team_id: route.id,
+    route_geometry: route.route_geometry,
     stops: route.stops.map((stop, index) => ({
       drain_id: stop.id,
       lat: stop.lat,
