@@ -52,7 +52,7 @@ export default function PriorityReasons({ drain, weightProfile }) {
             const value = drain[m.key]
             const weight = weightProfile?.[m.weightKey]
             const inactive = weight === 0
-            const fill = value != null ? Math.max(0, Math.min(1, value)) : 0
+const fill = value != null ? Math.max(0, Math.min(1, value)) : 0
             const source = sourceLabel(m.key, drain)
             return (
               <div className={`reason-metric ${inactive ? 'reason-metric-inactive' : ''}`} key={m.key}>

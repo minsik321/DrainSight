@@ -16,14 +16,13 @@ REST 엔드포인트(IF_0092, JSON/XML)는 승인된 키로도 계속 resultCode
 방식을 쓴다. 실제로 천안시 전역 bbox로 받아보면 파란 계열 픽셀이 존재함을 확인했다(레이어에
 실측 데이터가 있음). 그림 판독 방식이라 폴리곤 경계 부근에서 오차가 있을 수 있음 — 정확한
 속성 조회 API가 나중에 확인되면 이 모듈만 교체하면 된다.
-
 추가 확인(2026-09): 정상 발급된(계정 조회로 확인됨) SAFEMAP_API_KEY로 다시 테스트해도 WMS
-엔드포인트가 resultCode 30 "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"를 반환한다 — 키 문제가
-아니라, SafeMap 오픈API 데이터 페이지(safemap.go.kr/opna/data/dataView.do?objtId=212)
-자체에 "현재 데이터는 준비 중으로, 추후 제공될 예정임을 안내드립니다"라고 명시돼 있어 이
-데이터셋이 플랫폼에서 통째로 내려간 상태로 보인다 — 위 단락에서 성공했다고 적은 시점 이후
-SafeMap이 서비스를 개편/중단한 것으로 추정. 코드는 정상 동작(실패 시 None 반환)이므로 손댈
-게 없고, 서비스가 재개되는지만 가끔 재확인하면 된다.
+  엔드포인트가 resultCode 30 "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"를 반환한다 — 키 문제가
+  아니라, SafeMap 오픈API 데이터 페이지(safemap.go.kr/opna/data/dataView.do?objtId=212)
+  자체에 "현재 데이터는 준비 중으로, 추후 제공될 예정임을 안내드립니다"라고 명시돼 있어 이
+  데이터셋이 플랫폼에서 통째로 내려간 상태로 보인다 — 위 단락에서 성공했다고 적은 시점 이후
+  SafeMap이 서비스를 개편/중단한 것으로 추정. 코드는 정상 동작(실패 시 None 반환)이므로 손iciel
+  게 없고, 서비스가 재개되는만 가끔 재확인하면 된다.
 """
 import io
 import math

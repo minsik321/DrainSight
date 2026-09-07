@@ -47,7 +47,7 @@ class DrainOut(BaseModel):
     flood_history_flag: Optional[float] = None
     staleness_risk: Optional[float] = None
     occlusion_norm: Optional[float] = None
-    last_status: Optional[str] = None
+last_status: Optional[str] = None
     last_occlusion_pct: Optional[float] = None
     last_source: Optional[str] = None  # "pi"(실기기) | "simulator"(데모) — 최신 판정의 출처
     last_updated: Optional[datetime] = None
@@ -140,5 +140,5 @@ class WeatherAlertOut(BaseModel):
     staleness_threshold_days: float = 14.0
     weight_profile: dict = {}
     issued_at: Optional[str] = None
-    manual_override: bool = False  # True면 데모용으로 강제 고정된 모드 — 실제 예보 갱신이 덮어쓰지 않음
+manual_override: bool = False  # True면 데모용으로 강제 고정된 모드 — 실제 예보 갱신이 덮어쓰지 않음
     weather_source: Optional[str] = None  # "real" | "dummy" | "manual" — analytics.py/rainfall.py와 같은 원칙

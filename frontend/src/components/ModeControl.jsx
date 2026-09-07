@@ -29,7 +29,7 @@ export default function ModeControl({ alert, busy, onSetMode }) {
 
   if (!alert) return null
 
-  const mode = alert.mode || 'NORMAL'
+const mode = alert.mode || 'NORMAL'
   const manual = Boolean(alert.manual_override)
   // weather_source: "real"(실제 KMA 응답) / "dummy"(KMA_API_KEY 미설정·호출 실패로 대체된
   // 결정론적 값) / "manual"(발표자 강제 전환). manual_override와 별개로 관리되므로 둘 다 확인.

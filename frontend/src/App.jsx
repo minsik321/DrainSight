@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowsClockwise,
+  ArrowCounterClockwise,
   CheckCircle,
   DownloadSimple,
   MapTrifold,
@@ -9,13 +10,15 @@ import {
   Warning,
   X,
 } from '@phosphor-icons/react'
-import { fetchDrains, fetchHistory, fetchSystemEvents, fetchWeatherAlert, planRoute, refreshPriority, setWeatherMode, wsUrl } from './api'
+import { fetchDrains, fetchHistory, fetchSystemEvents, fetchWeatherAlert, refreshPriority, setWeatherMode, wsUrl } from './api'
 import NavRail, { VIEWS } from './components/NavRail.jsx'
 import ModeControl from './components/ModeControl.jsx'
 import TopbarSearch from './components/TopbarSearch.jsx'
 import Inspector from './components/Inspector.jsx'
 import MaintenanceAction from './components/MaintenanceAction.jsx'
+import PriorityMap, { MapLegend } from './components/PriorityMap.jsx'
 import PriorityList from './components/PriorityList.jsx'
+import RoutePlanner from './components/RoutePlanner.jsx'
 import RouteMapModal from './components/RouteMapModal.jsx'
 import { QrPreviewModal, QrShareModal } from './components/QrModals.jsx'
 import Pagination, { usePagination } from './components/Pagination.jsx'
@@ -25,7 +28,7 @@ import AnalysisView from './views/AnalysisView.jsx'
 import VehicleManagementView from './views/VehicleManagementView.jsx'
 import drainSampleImage from './assets/drain_sample.jpeg'
 import qrSampleImage from './assets/qr_sample.png'
-import { formatDuration, formatTime } from './format'
+import { formatTime } from './format'
 
 const POLL_MS = 1000 // WS 연결이 끊겼을 때만 쓰는 폴백 주기
 const FLASH_MS = 1800
@@ -51,6 +54,7 @@ const DETAIL_METRICS = [
 // 이 화면들은 지도가 목록과 나란히 화면을 가득 채우므로 뷰 여백을 없앤다(여백은
 // split-list/map-view 쪽에서 각자 처리).
 const FLUSH_VIEWS = new Set(['overview', 'fleet'])
+const SHOW_ROUTE_DRAFT = false
 
 function readHashView() {
   const id = window.location.hash.replace(/^#\/?/, '')
@@ -140,34 +144,116 @@ function DetailMetricGraphs({ drain }) {
   )
 }
 
-// 백엔드 team({ team_id, stops, total_distance_m, total_duration_s, ... })을
-// route-draft-view가 기대하는 화면용 shape으로 변환한다. stops는 실제 drain
-// 레코드(위치·상태 등)에 방문 순서(order)·구간거리(leg_distance_m)만 얹어서
-// RouteMapModal/QR 목록이 지금 그대로 쓰던 필드(id/lat/lng/name/last_status)를
-// 그대로 쓸 수 있게 한다.
-function mapTeamToRoute(team, drainsById) {
-  const stops = team.stops.map((s) => ({
-    ...(drainsById.get(s.drain_id) || { id: s.drain_id, name: s.name, lat: s.lat, lng: s.lng }),
-    order: s.order,
-    leg_distance_m: s.leg_distance_m,
-  }))
-  const firstStop = stops[0]
-  const lastStop = stops[stops.length - 1]
-  const path = stops.length > 1
-    ? `${firstStop.name} ··· ${lastStop.name}`
-    : firstStop?.name || '배정 대기'
+const DRAFT_ROUTE_MIN_STOPS = 6
+const DRAFT_ROUTE_MAX_STOPS = 10
 
-  return {
-    id: team.team_id,
-    name: `동선 ${team.team_id}`,
-    team: `${team.team_id}팀`,
-    path,
-    distance: `${(team.total_distance_m / 1000).toFixed(1)}km`,
-    duration: formatDuration(team.total_duration_s ?? team.total_drive_duration_s),
-    priority: stops.reduce((sum, s) => sum + (s.priority_score ?? 0), 0),
-    route_geometry: team.route_geometry,
-    stops,
+function haversineKm(a, b) {
+  const toRadians = (degrees) => degrees * Math.PI / 180
+  const earthRadiusKm = 6371
+  const latDelta = toRadians(b.lat - a.lat)
+  const lngDelta = toRadians(b.lng - a.lng)
+  const latA = toRadians(a.lat)
+  const latB = toRadians(b.lat)
+  const value = Math.sin(latDelta / 2) ** 2
+    + Math.cos(latA) * Math.cos(latB) * Math.sin(lngDelta / 2) ** 2
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
+}
+
+function routeDistanceKm(stops) {
+  return stops.slice(1).reduce(
+    (total, stop, index) => total + haversineKm(stops[index], stop),
+    0,
+  )
+}
+
+// 최근접 순회로 만든 경로에서 교차하거나 불필요하게 꺾이는 구간을 2-opt로 정리한다.
+// 첫 지점은 해당 팀에서 우선순위가 가장 높은 지점으로 고정한다.
+function optimizeStopOrder(stops) {
+  const route = [...stops]
+  let improved = true
+  let pass = 0
+
+  while (improved && pass < 20) {
+    improved = false
+    pass += 1
+
+    for (let start = 1; start < route.length - 1; start += 1) {
+      for (let end = start + 1; end < route.length; end += 1) {
+        const before = haversineKm(route[start - 1], route[start])
+          + (end + 1 < route.length ? haversineKm(route[end], route[end + 1]) : 0)
+        const after = haversineKm(route[start - 1], route[end])
+          + (end + 1 < route.length ? haversineKm(route[start], route[end + 1]) : 0)
+
+        if (after + 0.000001 < before) {
+          route.splice(start, end - start + 1, ...route.slice(start, end + 1).reverse())
+          improved = true
+        }
+      }
+    }
   }
+
+  return route
+}
+
+function takeNearbyStops(unassigned, targetSize) {
+  if (unassigned.length === 0) return []
+
+  const stops = [unassigned.shift()]
+  while (stops.length < targetSize && unassigned.length > 0) {
+    const current = stops[stops.length - 1]
+    let nearestIndex = 0
+    let nearestDistance = haversineKm(current, unassigned[0])
+
+    for (let index = 1; index < unassigned.length; index += 1) {
+      const distance = haversineKm(current, unassigned[index])
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestIndex = index
+      }
+    }
+
+    stops.push(unassigned.splice(nearestIndex, 1)[0])
+  }
+
+  return optimizeStopOrder(stops)
+}
+
+function buildDraftRoutes(count, drains = []) {
+  const routeCount = Math.max(1, Math.min(12, Number(count) || 1))
+  const unassigned = drains
+    .filter((drain) => Number.isFinite(drain.lat) && Number.isFinite(drain.lng))
+    .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0))
+    .slice(0, routeCount * DRAFT_ROUTE_MAX_STOPS)
+
+  return Array.from({ length: routeCount }, (_, index) => {
+    const remainingRoutes = routeCount - index
+    const enoughForMinimum = unassigned.length >= remainingRoutes * DRAFT_ROUTE_MIN_STOPS
+    const targetSize = enoughForMinimum
+      ? Math.min(
+        DRAFT_ROUTE_MAX_STOPS,
+        unassigned.length - DRAFT_ROUTE_MIN_STOPS * (remainingRoutes - 1),
+      )
+      : Math.ceil(unassigned.length / remainingRoutes)
+    const stops = takeNearbyStops(unassigned, targetSize)
+    const priority = stops.reduce((sum, drain) => sum + (drain.priority_score ?? 0), 0)
+    const distanceKm = routeDistanceKm(stops)
+    const firstStop = stops[0]
+    const lastStop = stops[stops.length - 1]
+    const path = stops.length > 1
+      ? `${firstStop.name} ··· ${lastStop.name}`
+      : firstStop?.name || '배정 대기'
+
+    return {
+      id: index + 1,
+      name: `동선 ${index + 1}`,
+      team: `${index + 1}팀`,
+      path,
+      distance: `${distanceKm.toFixed(1)}km`,
+      duration: `${Math.round(distanceKm * 3 + stops.length * 4)}분`,
+      priority,
+      stops,
+    }
+  })
 }
 
 const THEME_STORAGE_KEY = 'dvp-theme-toss'
@@ -191,13 +277,13 @@ export default function App() {
   const [historyError, setHistoryError] = useState(null)
   const [flashIds, setFlashIds] = useState(() => new Set())
   const [refreshing, setRefreshing] = useState(false)
+  const [routePlan, setRoutePlan] = useState(null)
   const [weatherAlert, setWeatherAlert] = useState(null)
   const [weatherToastVisible, setWeatherToastVisible] = useState(false)
   const [modeChanging, setModeChanging] = useState(false)
+  const [selectedTeamId, setSelectedTeamId] = useState(null)
   const [routeTeamCount, setRouteTeamCount] = useState(2)
-  const [routePlanResult, setRoutePlanResult] = useState(null)
-  const [routePlanLoading, setRoutePlanLoading] = useState(false)
-  const [routePlanError, setRoutePlanError] = useState(null)
+  const [draftRoutes, setDraftRoutes] = useState([])
   const [bulkQrGenerated, setBulkQrGenerated] = useState(false)
   const [selectedQrRouteId, setSelectedQrRouteId] = useState(null)
   const [routeMapRoute, setRouteMapRoute] = useState(null)
@@ -206,14 +292,6 @@ export default function App() {
   const [qrToastMessage, setQrToastMessage] = useState('')
   const [view, setView] = useState(readHashView)
   const [theme, setTheme] = useState(readStoredTheme)
-  const drainsById = useMemo(
-    () => new Map((drains || []).map((d) => [d.id, d])),
-    [drains],
-  )
-  const draftRoutes = useMemo(
-    () => (routePlanResult?.teams || []).map((team) => mapTeamToRoute(team, drainsById)),
-    [routePlanResult, drainsById],
-  )
   const sortedDraftRoutes = useMemo(
     () => [...draftRoutes].sort((a, b) => b.priority - a.priority),
     [draftRoutes],
@@ -236,7 +314,6 @@ export default function App() {
   const mountedRef = useRef(true)
   const weatherToastShownRef = useRef(false)
   const qrToastTimerRef = useRef(null)
-  const routePlanAutoTriedRef = useRef(false)
 
   // 뷰는 해시에 담는다 — 데모 중 새로고침해도 보던 화면이 유지되고, 뒤로가기도 동작한다.
   useEffect(() => {
@@ -459,32 +536,29 @@ export default function App() {
     () => (drains || []).filter((drain) => drain.requires_action),
     [drains],
   )
-  const handleGenerateRoutePlan = useCallback(async (teamCount) => {
-    setRoutePlanLoading(true)
-    setRoutePlanError(null)
-    try {
-      setRoutePlanResult(await planRoute(teamCount))
-    } catch (e) {
-      setRoutePlanError(e.message)
-    } finally {
-      setRoutePlanLoading(false)
-    }
+  const selectedTeam = useMemo(
+    () => (selectedTeamId != null ? routePlan?.teams?.find((t) => t.team_id === selectedTeamId) : null),
+    [selectedTeamId, routePlan],
+  )
+  const teamDrainIds = useMemo(
+    () => (selectedTeam ? new Set(selectedTeam.stops.map((s) => s.drain_id)) : null),
+    [selectedTeam],
+  )
+  const handleSelectTeam = useCallback((teamId) => {
+    setSelectedTeamId((prev) => (prev === teamId ? null : teamId))
+  }, [])
+  const handleRoutePlanResult = useCallback((result) => {
+    setRoutePlan(result)
+    setSelectedTeamId(null)
+  }, [])
+  const handleGenerateDraftRoutes = useCallback(() => {
+    setDraftRoutes(buildDraftRoutes(routeTeamCount, drains || []))
     setBulkQrGenerated(false)
     setSelectedQrRouteId(null)
     setRouteMapRoute(null)
     setQrPreviewRoute(null)
     setQrShareTarget(null)
-  }, [])
-
-  // 동선 탭에 처음 들어갈 때 자동으로 딱 한 번만 생성한다 — ref 가드라 실패하거나
-  // drains가 WS로 계속 갱신되더라도 재시도 폭주 없이 한 번만 호출된다. 이후
-  // 재생성은 항상 사용자가 버튼을 눌러야 한다.
-  useEffect(() => {
-    if (view === 'route' && drains && !routePlanAutoTriedRef.current) {
-      routePlanAutoTriedRef.current = true
-      handleGenerateRoutePlan(routeTeamCount)
-    }
-  }, [view, drains, routeTeamCount, handleGenerateRoutePlan])
+  }, [drains, routeTeamCount])
   const handleBulkQrGenerate = useCallback(() => {
     if (draftRoutes.length === 0) return
     setBulkQrGenerated(true)
@@ -724,206 +798,235 @@ export default function App() {
             )}
 
             {drains && view === 'route' && (
-              <div className="route-draft-view">
-                <div className="route-draft-main">
-                  <section className="route-setup-card">
-                    <label htmlFor="route-team-count">투입 팀 수</label>
-                    <input
-                      id="route-team-count"
-                      type="number"
-                      min="1"
-                      max="12"
-                      value={routeTeamCount}
-                      onChange={(event) => setRouteTeamCount(event.target.value)}
+              SHOW_ROUTE_DRAFT ? (
+                <div className="split-view">
+                  <div className="split-list">
+                    <RoutePlanner
+                      onResult={handleRoutePlanResult}
+                      selectedTeamId={selectedTeamId}
+                      onSelectTeam={handleSelectTeam}
                     />
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={() => handleGenerateRoutePlan(routeTeamCount)}
-                      disabled={routePlanLoading}
-                    >
-                      {routePlanLoading ? '생성 중...' : '동선 생성'}
-                    </button>
-                  </section>
-
-                  {routePlanError && (
-                    <div className="error-banner">동선 생성 실패: {routePlanError}</div>
-                  )}
-
-                  <section className="route-result-card">
-                    <div className="route-result-head">
-                      <span>번호</span>
-                      <span>팀(명)</span>
-                      <span>동선</span>
-                      <span>거리</span>
-                      <span>소요시간</span>
-                      <span>지도</span>
-                    </div>
-                    <div className="route-result-body">
-                      {routePlanLoading && draftRoutes.length === 0 ? (
-                        <div className="route-result-empty">동선을 생성하는 중입니다...</div>
-                      ) : draftRoutes.length > 0 ? (
-                        <div className="route-result-page">
-                          <div className="route-result-list">
-                            {routeResultPagination.pageItems.map((route) => (
-                              <div className="route-result-row" key={route.id}>
-                                <span>{route.id}</span>
-                                <span>{route.team}</span>
-                                <span>{route.path}</span>
-                                <span>{route.distance}</span>
-                                <span>{route.duration}</span>
-                                <span className="route-result-map-cell">
-                                  <button
-                                    type="button"
-                                    className="route-result-map-button"
-                                    onClick={() => setRouteMapRoute(route)}
-                                    aria-label={`${route.name} 지도 보기`}
-                                    title={`${route.name} 지도 보기`}
-                                  >
-                                    <MapTrifold size={18} weight="bold" />
-                                  </button>
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                          <Pagination
-                            page={routeResultPagination.page}
-                            totalPages={routeResultPagination.totalPages}
-                            onPageChange={routeResultPagination.setPage}
-                            label="동선 결과"
-                          />
-                        </div>
-                      ) : (
-                        <div className="route-result-empty">생성된 동선이 없습니다.</div>
-                      )}
-                    </div>
-                  </section>
-
-                  <section className="route-qr-card">
-                    <div className="route-qr-head">
-                      <h3>QR 생성</h3>
-                      <div className="route-qr-head-actions" aria-live="polite">
-                        <button
-                          type="button"
-                          className="btn btn-primary route-qr-bulk"
-                          onClick={handleBulkQrGenerate}
-                          disabled={draftRoutes.length === 0 || bulkQrGenerated}
-                        >
-                          QR 일괄 생성
-                        </button>
-                        {bulkQrGenerated && (
-                          <button
-                            type="button"
-                            className="btn route-qr-share"
-                            onClick={handleBulkQrShare}
-                          >
-                            <ShareNetwork size={16} weight="bold" />
-                            공유
-                          </button>
-                        )}
+                  </div>
+                  <div className="split-map">
+                    <PriorityMap
+                      drains={drains}
+                      flashIds={flashIds}
+                      selectedId={selectedId}
+                      onSelect={setSelectedId}
+                      teams={selectedTeam ? [selectedTeam] : routePlan?.teams}
+                      visibleDrainIds={teamDrainIds}
+                    />
+                    <MapLegend />
+                    {!routePlan && (
+                      <div className="split-map-hint">
+                        투입 팀 수를 정하고 동선 추천을 생성하면
+                        <br />
+                        각 팀의 경로가 여기 지도에 표시됩니다.
                       </div>
-                    </div>
-                    <div className="route-qr-content">
-                      <div className={`route-qr-preview${bulkQrGenerated && selectedQrRoute ? ' is-generated' : ''}`}>
-                        {bulkQrGenerated && selectedQrRoute ? (
-                          <button
-                            type="button"
-                            className="route-qr-generated"
-                            key={selectedQrRoute.id}
-                            onClick={() => setQrPreviewRoute(selectedQrRoute)}
-                            aria-label={`${selectedQrRoute.name} QR 코드 크게 보기`}
-                          >
-                            <img src={qrSampleImage} alt={`${selectedQrRoute.name} QR 코드`} />
-                            <span title={selectedQrRoute.name}>{selectedQrRoute.name}</span>
-                          </button>
-                        ) : (
-                          <p>QR 일괄 생성 후<br />미리보기가 표시됩니다.</p>
-                        )}
+                    )}
+                    {selectedTeamId != null && (
+                      <button
+                        type="button"
+                        className="btn btn-sm split-map-reset"
+                        onClick={() => handleSelectTeam(null)}
+                      >
+                        <ArrowCounterClockwise size={13} weight="bold" />
+                        전체 팀 보기
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="route-draft-view">
+                  <div className="route-draft-main">
+                    <section className="route-setup-card">
+                      <label htmlFor="route-team-count">투입 팀 수</label>
+                      <input
+                        id="route-team-count"
+                        type="number"
+                        min="1"
+                        max="12"
+                        value={routeTeamCount}
+                        onChange={(event) => setRouteTeamCount(event.target.value)}
+                      />
+                      <button type="button" className="btn btn-primary" onClick={handleGenerateDraftRoutes}>
+                        동선 생성
+                      </button>
+                    </section>
+
+                    <section className="route-result-card">
+                      <div className="route-result-head">
+                        <span>번호</span>
+                        <span>팀(명)</span>
+                        <span>동선</span>
+                        <span>거리</span>
+                        <span>소요시간</span>
+                        <span>지도</span>
                       </div>
-                      <div className="route-qr-list">
+                      <div className="route-result-body">
                         {draftRoutes.length > 0 ? (
-                          <>
-                            <div className="route-qr-items">
-                              {routeQrPagination.pageItems.map((route) => (
-                                <div
-                                  className={`route-qr-row${bulkQrGenerated ? ' selectable' : ''}${selectedQrRouteId === route.id ? ' selected' : ''}`}
-                                  key={route.id}
-                                >
-                                  <button
-                                    type="button"
-                                    className="route-qr-select"
-                                    disabled={!bulkQrGenerated}
-                                    aria-pressed={bulkQrGenerated ? selectedQrRouteId === route.id : undefined}
-                                    onClick={() => setSelectedQrRouteId(route.id)}
-                                  >
-                                    {route.name}
-                                  </button>
-                                  {bulkQrGenerated && (
-                                    <div className="route-qr-actions" aria-label={`${route.name} QR 작업`}>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleQrDownload(route)}
-                                        aria-label={`${route.name} QR 이미지 저장`}
-                                        title="이미지 저장"
-                                      >
-                                        <DownloadSimple size={16} weight="bold" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRouteQrShare(route)}
-                                        aria-label={`${route.name} QR 공유`}
-                                        title="공유"
-                                      >
-                                        <ShareNetwork size={16} weight="bold" />
-                                      </button>
-                                    </div>
-                                  )}
+                          <div className="route-result-page">
+                            <div className="route-result-list">
+                              {routeResultPagination.pageItems.map((route) => (
+                                <div className="route-result-row" key={route.id}>
+                                  <span>{route.id}</span>
+                                  <span>{route.team}</span>
+                                  <span>{route.path}</span>
+                                  <span>{route.distance}</span>
+                                  <span>{route.duration}</span>
+                                  <span className="route-result-map-cell">
+                                    <button
+                                      type="button"
+                                      className="route-result-map-button"
+                                      onClick={() => setRouteMapRoute(route)}
+                                      aria-label={`${route.name} 지도 보기`}
+                                      title={`${route.name} 지도 보기`}
+                                    >
+                                      <MapTrifold size={18} weight="bold" />
+                                    </button>
+                                  </span>
                                 </div>
                               ))}
                             </div>
                             <Pagination
-                              page={routeQrPagination.page}
-                              totalPages={routeQrPagination.totalPages}
-                              onPageChange={routeQrPagination.setPage}
-                              label="QR 생성 목록"
+                              page={routeResultPagination.page}
+                              totalPages={routeResultPagination.totalPages}
+                              onPageChange={routeResultPagination.setPage}
+                              label="동선 결과"
                             />
-                          </>
+                          </div>
                         ) : (
-                          <div className="route-qr-empty">생성된 동선명이 없습니다.</div>
+                          <div className="route-result-empty">생성된 동선이 없습니다.</div>
                         )}
                       </div>
-                    </div>
-                  </section>
-                </div>
+                    </section>
 
-                <aside className="route-priority-card">
-                  <div className="route-priority-head">
-                    <h3>우선순위</h3>
-                    <span>동선 생성 후 자동 정렬</span>
-                  </div>
-                  {draftRoutes.length > 0 ? (
-                    <div className="route-priority-page">
-                      <div className="route-priority-list">
-                        {routePriorityPagination.pageItems.map((route, index) => (
-                          <div className="route-priority-row" key={route.id}>
-                            <span>{(routePriorityPagination.page - 1) * 6 + index + 1}</span>
-                            <strong>{route.name}</strong>
-                            <small>{route.team} · {route.stops.length}개 지점</small>
-                          </div>
-                        ))}
+                    <section className="route-qr-card">
+                      <div className="route-qr-head">
+                        <h3>QR 생성</h3>
+                        <div className="route-qr-head-actions" aria-live="polite">
+                          <button
+                            type="button"
+                            className="btn btn-primary route-qr-bulk"
+                            onClick={handleBulkQrGenerate}
+                            disabled={draftRoutes.length === 0 || bulkQrGenerated}
+                          >
+                            QR 일괄 생성
+                          </button>
+                          {bulkQrGenerated && (
+                            <button
+                              type="button"
+                              className="btn route-qr-share"
+                              onClick={handleBulkQrShare}
+                            >
+                              <ShareNetwork size={16} weight="bold" />
+                              공유
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <Pagination
-                        page={routePriorityPagination.page}
-                        totalPages={routePriorityPagination.totalPages}
-                        onPageChange={routePriorityPagination.setPage}
-                        label="우선순위 목록"
-                      />
+                      <div className="route-qr-content">
+                        <div className={`route-qr-preview${bulkQrGenerated && selectedQrRoute ? ' is-generated' : ''}`}>
+                          {bulkQrGenerated && selectedQrRoute ? (
+                            <button
+                              type="button"
+                              className="route-qr-generated"
+                              key={selectedQrRoute.id}
+                              onClick={() => setQrPreviewRoute(selectedQrRoute)}
+                              aria-label={`${selectedQrRoute.name} QR 코드 크게 보기`}
+                            >
+                              <img src={qrSampleImage} alt={`${selectedQrRoute.name} QR 코드`} />
+                              <span title={selectedQrRoute.name}>{selectedQrRoute.name}</span>
+                            </button>
+                          ) : (
+                            <p>QR 일괄 생성 후<br />미리보기가 표시됩니다.</p>
+                          )}
+                        </div>
+                        <div className="route-qr-list">
+                          {draftRoutes.length > 0 ? (
+                            <>
+                              <div className="route-qr-items">
+                                {routeQrPagination.pageItems.map((route) => (
+                                  <div
+                                    className={`route-qr-row${bulkQrGenerated ? ' selectable' : ''}${selectedQrRouteId === route.id ? ' selected' : ''}`}
+                                    key={route.id}
+                                  >
+                                    <button
+                                      type="button"
+                                      className="route-qr-select"
+                                      disabled={!bulkQrGenerated}
+                                      aria-pressed={bulkQrGenerated ? selectedQrRouteId === route.id : undefined}
+                                      onClick={() => setSelectedQrRouteId(route.id)}
+                                    >
+                                      {route.name}
+                                    </button>
+                                    {bulkQrGenerated && (
+                                      <div className="route-qr-actions" aria-label={`${route.name} QR 작업`}>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleQrDownload(route)}
+                                          aria-label={`${route.name} QR 이미지 저장`}
+                                          title="이미지 저장"
+                                        >
+                                          <DownloadSimple size={16} weight="bold" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRouteQrShare(route)}
+                                          aria-label={`${route.name} QR 공유`}
+                                          title="공유"
+                                        >
+                                          <ShareNetwork size={16} weight="bold" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                              <Pagination
+                                page={routeQrPagination.page}
+                                totalPages={routeQrPagination.totalPages}
+                                onPageChange={routeQrPagination.setPage}
+                                label="QR 생성 목록"
+                              />
+                            </>
+                          ) : (
+                            <div className="route-qr-empty">생성된 동선명이 없습니다.</div>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+
+                  <aside className="route-priority-card">
+                    <div className="route-priority-head">
+                      <h3>우선순위</h3>
+                      <span>동선 생성 후 자동 정렬</span>
                     </div>
-                  ) : (
-                    <div className="route-priority-empty">우선순위 대상이 없습니다.</div>
-                  )}
-                </aside>
-              </div>
+                    {draftRoutes.length > 0 ? (
+                      <div className="route-priority-page">
+                        <div className="route-priority-list">
+                          {routePriorityPagination.pageItems.map((route, index) => (
+                            <div className="route-priority-row" key={route.id}>
+                              <span>{(routePriorityPagination.page - 1) * 6 + index + 1}</span>
+                              <strong>{route.name}</strong>
+                              <small>{route.team} · {route.stops.length}개 지점</small>
+                            </div>
+                          ))}
+                        </div>
+                        <Pagination
+                          page={routePriorityPagination.page}
+                          totalPages={routePriorityPagination.totalPages}
+                          onPageChange={routePriorityPagination.setPage}
+                          label="우선순위 목록"
+                        />
+                      </div>
+                    ) : (
+                      <div className="route-priority-empty">우선순위 대상이 없습니다.</div>
+                    )}
+                  </aside>
+                </div>
+              )
             )}
 
             {/* 차량 등록 목록 아래에서 노선별 관측 지점과 이동 경로를 함께 확인한다. */}
